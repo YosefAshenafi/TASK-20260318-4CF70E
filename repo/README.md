@@ -2,6 +2,14 @@
 
 Run and verify everything through **Docker** from this directory (`repo/`).
 
+## Default Credentials
+
+| Username | Password |
+|----------|----------|
+| admin    | password |
+
+You can create multiple roles from the app after signing in.
+
 ## Initial Access Provisioning
 
 No default credentialed user is seeded by migrations.
