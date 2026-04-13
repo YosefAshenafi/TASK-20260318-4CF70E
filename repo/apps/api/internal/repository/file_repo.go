@@ -198,3 +198,15 @@ func (r *FileRepository) ExpireStaleUploads(ctx context.Context, before time.Tim
 		Where("status = ? AND expires_at IS NOT NULL AND expires_at < ?", "initialized", before).
 		Update("status", "failed").Error
 }
+
+// CreateCaseAttachmentIndex inserts a row into case_attachment_indexes.
+func (r *FileRepository) CreateCaseAttachmentIndex(ctx context.Context, idx *model.CaseAttachmentIndex) error {
+	return r.db.WithContext(ctx).Create(idx).Error
+}
+
+// FileObjectExists returns true if a file_object row with the given ID exists.
+func (r *FileRepository) FileObjectExists(ctx context.Context, id string) bool {
+	var count int64
+	r.db.WithContext(ctx).Model(&model.FileObject{}).Where("id = ?", id).Count(&count)
+	return count > 0
+}

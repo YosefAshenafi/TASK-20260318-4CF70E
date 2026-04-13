@@ -55,9 +55,9 @@ type MergeHistoryDTO struct {
 	CreatedAt        string          `json:"createdAt"`
 }
 
-// DuplicateGroupDTO lists candidates sharing a normalized name.
+// DuplicateGroupDTO lists candidates sharing the same phone or ID number.
 type DuplicateGroupDTO struct {
-	NameKey       string   `json:"nameKey"`
+	MatchType     string   `json:"matchType"`
 	InstitutionID string   `json:"institutionId"`
 	CandidateIDs  []string `json:"candidateIds"`
 }
@@ -68,11 +68,15 @@ type importStaging struct {
 
 // ImportStagingRow is one row in a candidate import batch.
 type ImportStagingRow struct {
-	Name            string   `json:"name"`
-	Skills          []string `json:"skills"`
-	Tags            []string `json:"tags"`
-	ExperienceYears *int     `json:"experienceYears"`
-	EducationLevel  *string  `json:"educationLevel"`
+	Name            string         `json:"name"`
+	Phone           *string        `json:"phone,omitempty"`
+	IDNumber        *string        `json:"idNumber,omitempty"`
+	Email           *string        `json:"email,omitempty"`
+	Skills          []string       `json:"skills"`
+	Tags            []string       `json:"tags"`
+	ExperienceYears *int           `json:"experienceYears"`
+	EducationLevel  *string        `json:"educationLevel"`
+	CustomFields    map[string]any `json:"customFields,omitempty"`
 }
 
 type importValidationReport struct {
@@ -188,10 +192,14 @@ func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Pr
 			InstitutionID:   b.InstitutionID,
 			DepartmentID:    defDept,
 			TeamID:          defTeam,
+			Phone:           row.Phone,
+			IDNumber:        row.IDNumber,
+			Email:           row.Email,
 			ExperienceYears: row.ExperienceYears,
 			EducationLevel:  row.EducationLevel,
 			Skills:          row.Skills,
 			Tags:            row.Tags,
+			CustomFields:    row.CustomFields,
 		}, GetCandidateOpts{})
 		if err != nil {
 			return nil, err
@@ -213,19 +221,19 @@ func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Pr
 	return toImportDTO(out), nil
 }
 
-// ListDuplicateGroups returns name-key groups with more than one candidate.
+// ListDuplicateGroups returns groups of candidates sharing the same phone or ID number.
 func (s *RecruitmentService) ListDuplicateGroups(ctx context.Context, p *access.Principal) ([]DuplicateGroupDTO, error) {
 	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	groups, err := s.repo.ListDuplicateNameGroups(ctx, p)
+	groups, err := s.repo.ListDuplicateGroups(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]DuplicateGroupDTO, 0, len(groups))
 	for _, g := range groups {
 		out = append(out, DuplicateGroupDTO{
-			NameKey:       g.NameKey,
+			MatchType:     g.MatchType,
 			InstitutionID: g.InstitutionID,
 			CandidateIDs:  g.CandidateIDs,
 		})

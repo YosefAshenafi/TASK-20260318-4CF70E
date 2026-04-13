@@ -7,21 +7,22 @@ import (
 )
 
 type Candidate struct {
-	ID              string         `gorm:"column:id;type:char(36);primaryKey"`
-	InstitutionID   string         `gorm:"column:institution_id;type:char(36);not null"`
-	DepartmentID    *string      `gorm:"column:department_id;type:char(36)"`
-	TeamID          *string        `gorm:"column:team_id;type:char(36)"`
-	Name            string         `gorm:"column:name;not null"`
-	PhoneEnc        []byte         `gorm:"column:phone_enc"`
-	IDNumberEnc     []byte         `gorm:"column:id_number_enc"`
-	EmailEnc        []byte         `gorm:"column:email_enc"`
-	PIIKeyVersion   uint8          `gorm:"column:pii_key_version;not null;default:1"`
-	ExperienceYears *int         `gorm:"column:experience_years"`
-	EducationLevel  *string      `gorm:"column:education_level"`
-	DeletedAt       gorm.DeletedAt `gorm:"column:deleted_at;index"`
-	CreatedAt       time.Time      `gorm:"column:created_at"`
-	UpdatedAt       time.Time      `gorm:"column:updated_at"`
-	Skills          []CandidateSkill `gorm:"foreignKey:CandidateID;references:ID"`
+	ID               string         `gorm:"column:id;type:char(36);primaryKey"`
+	InstitutionID    string         `gorm:"column:institution_id;type:char(36);not null"`
+	DepartmentID     *string        `gorm:"column:department_id;type:char(36)"`
+	TeamID           *string        `gorm:"column:team_id;type:char(36)"`
+	Name             string         `gorm:"column:name;not null"`
+	PhoneEnc         []byte         `gorm:"column:phone_enc"`
+	IDNumberEnc      []byte         `gorm:"column:id_number_enc"`
+	EmailEnc         []byte         `gorm:"column:email_enc"`
+	PIIKeyVersion    uint8          `gorm:"column:pii_key_version;not null;default:1"`
+	ExperienceYears  *int           `gorm:"column:experience_years"`
+	EducationLevel   *string        `gorm:"column:education_level"`
+	CustomFieldsJSON []byte         `gorm:"column:custom_fields_json;type:json"`
+	DeletedAt        gorm.DeletedAt `gorm:"column:deleted_at;index"`
+	CreatedAt        time.Time      `gorm:"column:created_at"`
+	UpdatedAt        time.Time      `gorm:"column:updated_at"`
+	Skills           []CandidateSkill `gorm:"foreignKey:CandidateID;references:ID"`
 }
 
 func (Candidate) TableName() string { return "candidates" }

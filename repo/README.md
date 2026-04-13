@@ -50,7 +50,7 @@ bash scripts/db_migrate.sh
 
 ```bash
 # API (requires MySQL running):
-cd apps/api && go run ./cmd/server
+cd apps/api && go run ./cmd/api
 
 # Web dev server:
 cd apps/web && npm install && npm run dev

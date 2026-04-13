@@ -13,11 +13,12 @@ import (
 )
 
 type AuditHandler struct {
-	svc *service.AuditService
+	svc       *service.AuditService
+	exportDir string
 }
 
-func NewAuditHandler(svc *service.AuditService) *AuditHandler {
-	return &AuditHandler{svc: svc}
+func NewAuditHandler(svc *service.AuditService, exportDir string) *AuditHandler {
+	return &AuditHandler{svc: svc, exportDir: exportDir}
 }
 
 func (h *AuditHandler) ListLogs(c *gin.Context) {
@@ -26,7 +27,6 @@ func (h *AuditHandler) ListLogs(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
-	_ = pr
 	page, pageSize, offset := ParsePagination(c)
 	sortBy := c.DefaultQuery("sortBy", "created_at")
 	sortOrder := c.DefaultQuery("sortOrder", "desc")
@@ -49,7 +49,7 @@ func (h *AuditHandler) ListLogs(c *gin.Context) {
 		}
 		toPtr = &t
 	}
-	items, total, page, pageSize, err := h.svc.ListAuditLogs(c.Request.Context(), page, pageSize, offset, sortBy, sortOrder, service.ListAuditLogsInput{
+	items, total, page, pageSize, err := h.svc.ListAuditLogs(c.Request.Context(), pr, page, pageSize, offset, sortBy, sortOrder, service.ListAuditLogsInput{
 		Module:     module,
 		TargetType: targetType,
 		From:       fromPtr,
@@ -80,7 +80,6 @@ func (h *AuditHandler) RequestExport(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
-	_ = pr
 	uid := c.GetString("userID")
 	if uid == "" {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing user")
@@ -91,12 +90,12 @@ func (h *AuditHandler) RequestExport(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
 		return
 	}
-	dto, err := h.svc.RequestExport(c.Request.Context(), uid, service.AuditExportFilter{
+	dto, err := h.svc.RequestExport(c.Request.Context(), pr, uid, service.AuditExportFilter{
 		Module:     body.Module,
 		TargetType: body.TargetType,
 		From:       body.From,
 		To:         body.To,
-	}, auditRequestMeta(c))
+	}, auditRequestMeta(c), h.exportDir)
 	if errors.Is(err, service.ErrAuditExportValidation) {
 		response.Error(c, http.StatusBadRequest, "EXPORT_VALIDATION_FAILED", "invalid export filter")
 		return
@@ -106,4 +105,34 @@ func (h *AuditHandler) RequestExport(c *gin.Context) {
 		return
 	}
 	response.OK(c, dto)
+}
+
+func (h *AuditHandler) GetExport(c *gin.Context) {
+	_, ok := middleware.GetPrincipal(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	id := c.Param("exportId")
+	dto, err := h.svc.GetExport(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, http.StatusNotFound, "EXPORT_NOT_FOUND", "export not found")
+		return
+	}
+	response.OK(c, dto)
+}
+
+func (h *AuditHandler) DownloadExport(c *gin.Context) {
+	_, ok := middleware.GetPrincipal(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	id := c.Param("exportId")
+	dto, err := h.svc.GetExport(c.Request.Context(), id)
+	if err != nil || dto.OutputFilePath == nil {
+		response.Error(c, http.StatusNotFound, "EXPORT_NOT_FOUND", "export not found or not ready")
+		return
+	}
+	c.File(*dto.OutputFilePath)
 }

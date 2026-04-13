@@ -62,12 +62,21 @@ type ViolationDTO struct {
 }
 
 type ComplianceService struct {
-	repo  *repository.ComplianceRepository
-	audit *AuditService
+	repo     *repository.ComplianceRepository
+	audit    *AuditService
+	fileRepo *repository.FileRepository
 }
 
-func NewComplianceService(repo *repository.ComplianceRepository, audit *AuditService) *ComplianceService {
-	return &ComplianceService{repo: repo, audit: audit}
+func NewComplianceService(repo *repository.ComplianceRepository, audit *AuditService, opts ...func(*ComplianceService)) *ComplianceService {
+	svc := &ComplianceService{repo: repo, audit: audit}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+func WithFileRepository(fr *repository.FileRepository) func(*ComplianceService) {
+	return func(s *ComplianceService) { s.fileRepo = fr }
 }
 
 func qualificationOrder(sortBy, sortOrder string) string {
@@ -434,9 +443,15 @@ func (s *ComplianceService) ListExpiringQualifications(ctx context.Context, p *a
 }
 
 // RunQualificationExpirationJob deactivates active qualifications whose expires_on is before today.
+// Accepts system principals (full_access) for scheduled/automated runs.
 func (s *ComplianceService) RunQualificationExpirationJob(ctx context.Context, p *access.Principal, meta AuditRequestMeta) (deactivated int64, err error) {
-	if err := requireScope(p); err != nil {
-		return 0, err
+	if p == nil {
+		return 0, ErrForbiddenScope
+	}
+	if !p.Has("system.full_access") {
+		if err := requireScope(p); err != nil {
+			return 0, err
+		}
 	}
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -667,6 +682,12 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 		}
 		if rule.RequiresPrescription && in.IsControlled {
 			hasRx := in.PrescriptionAttachmentID != nil && *in.PrescriptionAttachmentID != ""
+			if hasRx && s.fileRepo != nil {
+				exists := s.fileRepo.FileObjectExists(ctx, *in.PrescriptionAttachmentID)
+				if !exists {
+					hasRx = false
+				}
+			}
 			if !hasRx {
 				details, _ := json.Marshal(map[string]any{"reason": "PRESCRIPTION_REQUIRED", "restrictionId": row.ID})
 				_ = s.repo.InsertViolation(ctx, &model.RestrictionViolationRecord{

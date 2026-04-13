@@ -53,3 +53,14 @@ type FileReference struct {
 }
 
 func (FileReference) TableName() string { return "file_references" }
+
+// CaseAttachmentIndex maps to `case_attachment_indexes` (dedicated case-file linkage).
+type CaseAttachmentIndex struct {
+	ID           string    `gorm:"column:id;type:char(36);primaryKey"`
+	CaseID       string    `gorm:"column:case_id;type:char(36);not null;index:idx_case_attach_case"`
+	FileObjectID string    `gorm:"column:file_object_id;type:char(36);not null"`
+	Purpose      *string   `gorm:"column:purpose;type:varchar(64)"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
+}
+
+func (CaseAttachmentIndex) TableName() string { return "case_attachment_indexes" }

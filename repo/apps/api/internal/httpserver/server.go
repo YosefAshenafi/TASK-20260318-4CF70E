@@ -1,12 +1,17 @@
 package httpserver
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/config"
 	cryptopii "pharmaops/api/internal/crypto/pii"
 	"pharmaops/api/internal/handler"
@@ -49,12 +54,15 @@ func (s *Server) Run() error {
 	recSvc := service.NewRecruitmentService(recRepo, piiCipher, auditSvc)
 	recH := handler.NewRecruitmentHandler(recSvc)
 	complianceRepo := repository.NewComplianceRepository(s.db)
-	complianceSvc := service.NewComplianceService(complianceRepo, auditSvc)
+	fileRepoForCompliance := repository.NewFileRepository(s.db)
+	complianceSvc := service.NewComplianceService(complianceRepo, auditSvc, service.WithFileRepository(fileRepoForCompliance))
 	complianceH := handler.NewComplianceHandler(complianceSvc)
 	caseRepo := repository.NewCaseRepository(s.db)
 	caseSvc := service.NewCaseService(caseRepo, auditSvc)
 	caseH := handler.NewCaseHandler(caseSvc)
-	auditH := handler.NewAuditHandler(auditSvc)
+	auditExportDir := filepath.Join(s.cfg.FileStorageRoot, "audit-exports")
+	_ = os.MkdirAll(auditExportDir, 0o700)
+	auditH := handler.NewAuditHandler(auditSvc, auditExportDir)
 	rbacRepo := repository.NewRbacRepository(s.db)
 	rbacSvc := service.NewRbacService(userRepo, rbacRepo, auditSvc)
 	rbacH := handler.NewRbacHandler(rbacSvc)
@@ -131,6 +139,8 @@ func (s *Server) Run() error {
 
 			authz.GET("/audit/logs", middleware.RequirePermission("audit.view"), auditH.ListLogs)
 			authz.POST("/audit/logs/export", middleware.RequirePermission("audit.view"), auditH.RequestExport)
+			authz.GET("/audit/logs/export/:exportId", middleware.RequirePermission("audit.view"), auditH.GetExport)
+			authz.GET("/audit/logs/export/:exportId/download", middleware.RequirePermission("audit.view"), auditH.DownloadExport)
 
 			authz.GET("/files", middleware.RequirePermission("files.view"), fileH.ListFiles)
 			authz.POST("/files/uploads/init", middleware.RequirePermission("files.manage"), fileH.InitUpload)
@@ -157,9 +167,33 @@ func (s *Server) Run() error {
 		}
 	}
 
+	go runQualificationExpirationScheduler(complianceSvc)
+
 	addr := s.cfg.HTTPAddr
 	if err := r.Run(addr); err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	return nil
+}
+
+func runQualificationExpirationScheduler(svc *service.ComplianceService) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	runOnce := func() {
+		ctx := context.Background()
+		systemPrincipal := &access.Principal{
+			PermissionSet: map[string]struct{}{access.PermissionFullAccess: {}},
+			Scopes:        []access.Scope{{InstitutionID: "*"}},
+		}
+		n, err := svc.RunQualificationExpirationJob(ctx, systemPrincipal, service.AuditRequestMeta{OperatorUserID: "system"})
+		if err != nil {
+			log.Printf("[expiration-scheduler] error: %v", err)
+		} else if n > 0 {
+			log.Printf("[expiration-scheduler] deactivated %d expired qualifications", n)
+		}
+	}
+	runOnce()
+	for range ticker.C {
+		runOnce()
+	}
 }

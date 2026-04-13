@@ -7,6 +7,9 @@ type AuditLog struct {
 	Module         string    `gorm:"column:module;not null;index"`
 	Operation      string    `gorm:"column:operation;not null"`
 	OperatorUserID string    `gorm:"column:operator_user_id;type:char(36);not null;index"`
+	InstitutionID  *string   `gorm:"column:institution_id;type:char(36);index"`
+	DepartmentID   *string   `gorm:"column:department_id;type:char(36)"`
+	TeamID         *string   `gorm:"column:team_id;type:char(36)"`
 	RequestSource  *string   `gorm:"column:request_source"`
 	RequestID      *string   `gorm:"column:request_id"`
 	TargetType     string    `gorm:"column:target_type;not null"`

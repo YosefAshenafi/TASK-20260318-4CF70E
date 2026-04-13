@@ -51,9 +51,42 @@ func NewRecruitmentRepository(db *gorm.DB) *RecruitmentRepository {
 	return &RecruitmentRepository{db: db}
 }
 
-func (r *RecruitmentRepository) ListCandidates(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.Candidate, int64, error) {
+// CandidateFilter holds optional search/filter parameters.
+type CandidateFilter struct {
+	Keyword        string
+	Skills         []string
+	EducationLevel string
+	MinExperience  *int
+	MaxExperience  *int
+}
+
+func applyCandidateFilters(q *gorm.DB, f CandidateFilter) *gorm.DB {
+	if f.Keyword != "" {
+		kw := "%" + f.Keyword + "%"
+		q = q.Where("name LIKE ?", kw)
+	}
+	if f.EducationLevel != "" {
+		q = q.Where("education_level = ?", f.EducationLevel)
+	}
+	if f.MinExperience != nil {
+		q = q.Where("experience_years >= ?", *f.MinExperience)
+	}
+	if f.MaxExperience != nil {
+		q = q.Where("experience_years <= ?", *f.MaxExperience)
+	}
+	if len(f.Skills) > 0 {
+		sub := q.Session(&gorm.Session{}).Model(&model.CandidateSkill{}).
+			Select("DISTINCT candidate_id").
+			Where("skill_name IN ?", f.Skills)
+		q = q.Where("id IN (?)", sub)
+	}
+	return q
+}
+
+func (r *RecruitmentRepository) ListCandidates(ctx context.Context, p *access.Principal, offset, limit int, orderClause string, f CandidateFilter) ([]model.Candidate, int64, error) {
 	base := r.db.WithContext(ctx).Model(&model.Candidate{})
 	base = applyDataScope(base, p, "institution_id", "department_id", "team_id")
+	base = applyCandidateFilters(base, f)
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -61,6 +94,7 @@ func (r *RecruitmentRepository) ListCandidates(ctx context.Context, p *access.Pr
 	var rows []model.Candidate
 	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Preload("Skills")
 	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	q = applyCandidateFilters(q, f)
 	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
@@ -118,16 +152,17 @@ func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Ca
 	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Where("id = ?", c.ID)
 	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
 	res := q.Updates(map[string]interface{}{
-			"name":              c.Name,
-			"department_id":     c.DepartmentID,
-			"team_id":           c.TeamID,
-			"experience_years":  c.ExperienceYears,
-			"education_level":   c.EducationLevel,
-			"phone_enc":         c.PhoneEnc,
-			"id_number_enc":     c.IDNumberEnc,
-			"email_enc":         c.EmailEnc,
-			"pii_key_version":   c.PIIKeyVersion,
-			"updated_at":        time.Now().UTC(),
+			"name":               c.Name,
+			"department_id":      c.DepartmentID,
+			"team_id":            c.TeamID,
+			"experience_years":   c.ExperienceYears,
+			"education_level":    c.EducationLevel,
+			"phone_enc":          c.PhoneEnc,
+			"id_number_enc":      c.IDNumberEnc,
+			"email_enc":          c.EmailEnc,
+			"pii_key_version":    c.PIIKeyVersion,
+			"custom_fields_json": c.CustomFieldsJSON,
+			"updated_at":         time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return res.Error
@@ -281,39 +316,63 @@ func (r *RecruitmentRepository) ListPositionRequirements(ctx context.Context, po
 	return rows, err
 }
 
-// --- Duplicates (same normalized name within institution) ---
+// --- Duplicates (same phone_enc or id_number_enc within institution) ---
 
-type DuplicateNameGroup struct {
-	NameKey        string
+type DuplicateGroup struct {
+	MatchKey       string
+	MatchType      string
 	InstitutionID  string
 	CandidateIDs   []string
 }
 
-func (r *RecruitmentRepository) ListDuplicateNameGroups(ctx context.Context, pr *access.Principal) ([]DuplicateNameGroup, error) {
+func (r *RecruitmentRepository) ListDuplicateGroups(ctx context.Context, pr *access.Principal) ([]DuplicateGroup, error) {
 	scopeSQL, scopeArgs, ok := buildDataScopeExpr(pr, "institution_id", "department_id", "team_id")
 	if !ok {
 		return nil, nil
 	}
+
 	type row struct {
-		NameKey       string
+		MatchKey      string
+		MatchType     string
 		InstitutionID string
 		IDsCSV        string `gorm:"column:ids_csv"`
 	}
-	var raw []row
-	query := `
-SELECT LOWER(TRIM(name)) AS name_key, institution_id,
+
+	phoneQuery := `
+SELECT HEX(phone_enc) AS match_key, 'phone' AS match_type, institution_id,
        GROUP_CONCAT(id ORDER BY created_at) AS ids_csv
 FROM candidates
-WHERE deleted_at IS NULL AND ` + scopeSQL + `
-GROUP BY LOWER(TRIM(name)), institution_id
+WHERE deleted_at IS NULL AND phone_enc IS NOT NULL AND LENGTH(phone_enc) > 0 AND ` + scopeSQL + `
+GROUP BY HEX(phone_enc), institution_id
 HAVING COUNT(*) > 1
 `
-	err := r.db.WithContext(ctx).Raw(query, scopeArgs...).Scan(&raw).Error
-	if err != nil {
+	var phoneRaw []row
+	if err := r.db.WithContext(ctx).Raw(phoneQuery, scopeArgs...).Scan(&phoneRaw).Error; err != nil {
 		return nil, err
 	}
-	out := make([]DuplicateNameGroup, 0, len(raw))
-	for _, r0 := range raw {
+
+	idQuery := `
+SELECT HEX(id_number_enc) AS match_key, 'id_number' AS match_type, institution_id,
+       GROUP_CONCAT(id ORDER BY created_at) AS ids_csv
+FROM candidates
+WHERE deleted_at IS NULL AND id_number_enc IS NOT NULL AND LENGTH(id_number_enc) > 0 AND ` + scopeSQL + `
+GROUP BY HEX(id_number_enc), institution_id
+HAVING COUNT(*) > 1
+`
+	var idRaw []row
+	if err := r.db.WithContext(ctx).Raw(idQuery, scopeArgs...).Scan(&idRaw).Error; err != nil {
+		return nil, err
+	}
+
+	all := append(phoneRaw, idRaw...)
+	seen := make(map[string]struct{})
+	out := make([]DuplicateGroup, 0, len(all))
+	for _, r0 := range all {
+		dedup := r0.MatchType + ":" + r0.MatchKey + ":" + r0.InstitutionID
+		if _, ok := seen[dedup]; ok {
+			continue
+		}
+		seen[dedup] = struct{}{}
 		parts := strings.Split(r0.IDsCSV, ",")
 		ids := make([]string, 0, len(parts))
 		for _, p := range parts {
@@ -325,8 +384,9 @@ HAVING COUNT(*) > 1
 		if len(ids) < 2 {
 			continue
 		}
-		out = append(out, DuplicateNameGroup{
-			NameKey:       r0.NameKey,
+		out = append(out, DuplicateGroup{
+			MatchKey:      r0.MatchKey,
+			MatchType:     r0.MatchType,
 			InstitutionID: r0.InstitutionID,
 			CandidateIDs:  ids,
 		})

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/model"
 	"pharmaops/api/internal/oplog"
 	"pharmaops/api/internal/repository"
@@ -31,16 +32,20 @@ type AuditLogDTO struct {
 }
 
 type AuditExportDTO struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID             string  `json:"id"`
+	Status         string  `json:"status"`
+	OutputFilePath *string `json:"outputFilePath,omitempty"`
+	CreatedAt      string  `json:"createdAt"`
 }
 
-// AuditRequestMeta carries operator identity and HTTP request correlation (design §17.2).
+// AuditRequestMeta carries operator identity, data scope context, and HTTP request correlation (design §17.2).
 type AuditRequestMeta struct {
 	OperatorUserID string
 	RequestID      string
 	RequestSource  *string
+	InstitutionID  *string
+	DepartmentID   *string
+	TeamID         *string
 }
 
 // AuditMutationInput is one append-only audit row with optional before/after field maps.
@@ -239,6 +244,9 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 		Module:         in.Module,
 		Operation:      in.Operation,
 		OperatorUserID: in.Meta.OperatorUserID,
+		InstitutionID:  in.Meta.InstitutionID,
+		DepartmentID:   in.Meta.DepartmentID,
+		TeamID:         in.Meta.TeamID,
 		TargetType:     in.TargetType,
 		TargetID:       in.TargetID,
 		BeforeJSON:     beforeJSON,
@@ -254,8 +262,8 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 	return s.repo.CreateAuditLog(ctx, row)
 }
 
-func (s *AuditService) ListAuditLogs(ctx context.Context, page, pageSize, offset int, sortBy, sortOrder string, in ListAuditLogsInput) ([]AuditLogDTO, int64, int, int, error) {
-	rows, total, err := s.repo.ListLogs(ctx, offset, pageSize, auditLogOrder(sortBy, sortOrder), in.Module, in.TargetType, in.From, in.To)
+func (s *AuditService) ListAuditLogs(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string, in ListAuditLogsInput) ([]AuditLogDTO, int64, int, int, error) {
+	rows, total, err := s.repo.ListLogs(ctx, p, offset, pageSize, auditLogOrder(sortBy, sortOrder), in.Module, in.TargetType, in.From, in.To)
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -277,7 +285,7 @@ type AuditExportFilter struct {
 // ErrAuditExportValidation when export filter cannot be encoded or validated.
 var ErrAuditExportValidation = errors.New("audit export validation failed")
 
-func (s *AuditService) RequestExport(ctx context.Context, userID string, filter AuditExportFilter, meta AuditRequestMeta) (*AuditExportDTO, error) {
+func (s *AuditService) RequestExport(ctx context.Context, p *access.Principal, userID string, filter AuditExportFilter, meta AuditRequestMeta, outputDir string) (*AuditExportDTO, error) {
 	b, err := json.Marshal(filter)
 	if err != nil {
 		return nil, ErrAuditExportValidation
@@ -293,23 +301,52 @@ func (s *AuditService) RequestExport(ctx context.Context, userID string, filter 
 	if err := s.repo.CreateExport(ctx, e); err != nil {
 		return nil, err
 	}
+
+	if err := s.repo.ExecuteExport(ctx, p, e, outputDir); err != nil {
+		e.Status = "failed"
+		_ = s.repo.UpdateExport(ctx, e)
+		return nil, err
+	}
+
 	opMeta := meta
 	if opMeta.OperatorUserID == "" {
 		opMeta.OperatorUserID = userID
 	}
 	_ = s.LogMutation(ctx, AuditMutationInput{
 		Module:     "audit",
-		Operation:  "audit.export_requested",
+		Operation:  "audit.export_completed",
 		TargetType: "audit_export",
 		TargetID:   e.ID,
 		After: map[string]any{
 			"filter": DTOToAuditMap(filter),
+			"status": e.Status,
 		},
 		Meta: opMeta,
 	})
-	return &AuditExportDTO{
+	dto := &AuditExportDTO{
 		ID:        e.ID,
 		Status:    e.Status,
 		CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
-	}, nil
+	}
+	if e.OutputFilePath != nil {
+		dto.OutputFilePath = e.OutputFilePath
+	}
+	return dto, nil
+}
+
+// GetExport returns the status of an export request.
+func (s *AuditService) GetExport(ctx context.Context, id string) (*AuditExportDTO, error) {
+	e, err := s.repo.GetExport(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	dto := &AuditExportDTO{
+		ID:        e.ID,
+		Status:    e.Status,
+		CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if e.OutputFilePath != nil {
+		dto.OutputFilePath = e.OutputFilePath
+	}
+	return dto, nil
 }

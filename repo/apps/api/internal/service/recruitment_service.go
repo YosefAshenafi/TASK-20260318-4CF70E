@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -203,6 +204,11 @@ func (s *RecruitmentService) candidateDTO(c *model.Candidate, tags []string, rev
 		}
 	}
 
+	customFields := map[string]any{}
+	if len(c.CustomFieldsJSON) > 0 {
+		_ = json.Unmarshal(c.CustomFieldsJSON, &customFields)
+	}
+
 	dto := CandidateDTO{
 		ID:              c.ID,
 		Name:            c.Name,
@@ -213,7 +219,7 @@ func (s *RecruitmentService) candidateDTO(c *model.Candidate, tags []string, rev
 		ExperienceYears: c.ExperienceYears,
 		EducationLevel:  c.EducationLevel,
 		Tags:            tags,
-		CustomFields:    map[string]any{},
+		CustomFields:    customFields,
 		InstitutionID:   c.InstitutionID,
 		DepartmentID:    c.DepartmentID,
 		TeamID:          c.TeamID,
@@ -273,12 +279,27 @@ func positionOrder(sortBy, sortOrder string) string {
 	return col + " " + order
 }
 
-// ListCandidates returns paginated candidates in scope.
-func (s *RecruitmentService) ListCandidates(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]CandidateDTO, int64, int, int, error) {
+// CandidateSearchParams mirrors the query parameters for candidate search/filter.
+type CandidateSearchParams struct {
+	Keyword        string
+	Skills         []string
+	EducationLevel string
+	MinExperience  *int
+	MaxExperience  *int
+}
+
+// ListCandidates returns paginated candidates in scope with optional filters.
+func (s *RecruitmentService) ListCandidates(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string, search CandidateSearchParams) ([]CandidateDTO, int64, int, int, error) {
 	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListCandidates(ctx, p, offset, pageSize, candidateOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListCandidates(ctx, p, offset, pageSize, candidateOrder(sortBy, sortOrder), repository.CandidateFilter{
+		Keyword:        search.Keyword,
+		Skills:         search.Skills,
+		EducationLevel: search.EducationLevel,
+		MinExperience:  search.MinExperience,
+		MaxExperience:  search.MaxExperience,
+	})
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -328,6 +349,7 @@ type CreateCandidateInput struct {
 	EducationLevel  *string
 	Skills          []string
 	Tags            []string
+	CustomFields    map[string]any
 }
 
 func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Principal, in CreateCandidateInput, opts GetCandidateOpts) (*CandidateDTO, error) {
@@ -349,21 +371,26 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	if err != nil {
 		return nil, err
 	}
+	var cfJSON []byte
+	if len(in.CustomFields) > 0 {
+		cfJSON, _ = json.Marshal(in.CustomFields)
+	}
 	now := time.Now().UTC()
 	c := &model.Candidate{
-		ID:              uuid.NewString(),
-		InstitutionID:   in.InstitutionID,
-		DepartmentID:    in.DepartmentID,
-		TeamID:          in.TeamID,
-		Name:            in.Name,
-		PhoneEnc:        phoneEnc,
-		IDNumberEnc:     idEnc,
-		EmailEnc:        emailEnc,
-		PIIKeyVersion:   1,
-		ExperienceYears: in.ExperienceYears,
-		EducationLevel:  in.EducationLevel,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:               uuid.NewString(),
+		InstitutionID:    in.InstitutionID,
+		DepartmentID:     in.DepartmentID,
+		TeamID:           in.TeamID,
+		Name:             in.Name,
+		PhoneEnc:         phoneEnc,
+		IDNumberEnc:      idEnc,
+		EmailEnc:         emailEnc,
+		PIIKeyVersion:    1,
+		ExperienceYears:  in.ExperienceYears,
+		EducationLevel:   in.EducationLevel,
+		CustomFieldsJSON: cfJSON,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	skillSeen := make(map[string]struct{})
 	skills := make([]model.CandidateSkill, 0, len(in.Skills))
@@ -426,6 +453,7 @@ type UpdateCandidateInput struct {
 	Email           *string
 	ExperienceYears *int
 	EducationLevel  *string
+	CustomFields    map[string]any
 }
 
 func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Principal, id string, in UpdateCandidateInput, opts GetCandidateOpts) (*CandidateDTO, error) {
@@ -473,6 +501,10 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 	}
 	if in.EducationLevel != nil {
 		c.EducationLevel = in.EducationLevel
+	}
+	if in.CustomFields != nil {
+		cfJSON, _ := json.Marshal(in.CustomFields)
+		c.CustomFieldsJSON = cfJSON
 	}
 	if !p.RowVisible(c.InstitutionID, c.DepartmentID, c.TeamID) {
 		return nil, ErrForbiddenScope

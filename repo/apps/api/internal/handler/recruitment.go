@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -39,7 +40,31 @@ func (h *RecruitmentHandler) ListCandidates(c *gin.Context) {
 	page, pageSize, offset := ParsePagination(c)
 	sortBy := c.DefaultQuery("sortBy", "created_at")
 	sortOrder := c.DefaultQuery("sortOrder", "desc")
-	items, total, page, pageSize, err := h.svc.ListCandidates(c.Request.Context(), pr, page, pageSize, offset, sortBy, sortOrder)
+
+	search := service.CandidateSearchParams{
+		Keyword:        c.Query("keyword"),
+		EducationLevel: c.Query("educationLevel"),
+	}
+	if sk := c.Query("skills"); sk != "" {
+		for _, s := range strings.Split(sk, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				search.Skills = append(search.Skills, s)
+			}
+		}
+	}
+	if v := c.Query("minExperience"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			search.MinExperience = &n
+		}
+	}
+	if v := c.Query("maxExperience"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			search.MaxExperience = &n
+		}
+	}
+
+	items, total, page, pageSize, err := h.svc.ListCandidates(c.Request.Context(), pr, page, pageSize, offset, sortBy, sortOrder, search)
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "no institution scope")
 		return
@@ -80,17 +105,18 @@ func (h *RecruitmentHandler) GetCandidate(c *gin.Context) {
 }
 
 type createCandidateBody struct {
-	Name            string   `json:"name" binding:"required"`
-	InstitutionID   string   `json:"institutionId" binding:"required"`
-	DepartmentID    *string  `json:"departmentId"`
-	TeamID          *string  `json:"teamId"`
-	Phone           *string  `json:"phone"`
-	IDNumber        *string  `json:"idNumber"`
-	Email           *string  `json:"email"`
-	ExperienceYears *int     `json:"experienceYears"`
-	EducationLevel  *string  `json:"educationLevel"`
-	Skills          []string `json:"skills"`
-	Tags            []string `json:"tags"`
+	Name            string         `json:"name" binding:"required"`
+	InstitutionID   string         `json:"institutionId" binding:"required"`
+	DepartmentID    *string        `json:"departmentId"`
+	TeamID          *string        `json:"teamId"`
+	Phone           *string        `json:"phone"`
+	IDNumber        *string        `json:"idNumber"`
+	Email           *string        `json:"email"`
+	ExperienceYears *int           `json:"experienceYears"`
+	EducationLevel  *string        `json:"educationLevel"`
+	Skills          []string       `json:"skills"`
+	Tags            []string       `json:"tags"`
+	CustomFields    map[string]any `json:"customFields"`
 }
 
 func (h *RecruitmentHandler) CreateCandidate(c *gin.Context) {
@@ -115,7 +141,8 @@ func (h *RecruitmentHandler) CreateCandidate(c *gin.Context) {
 		ExperienceYears: body.ExperienceYears,
 		EducationLevel:  body.EducationLevel,
 		Skills:          body.Skills,
-		Tags:              body.Tags,
+		Tags:            body.Tags,
+		CustomFields:    body.CustomFields,
 	}, recruitmentPIIAuditOpts(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
@@ -133,14 +160,15 @@ func (h *RecruitmentHandler) CreateCandidate(c *gin.Context) {
 }
 
 type patchCandidateBody struct {
-	Name            *string `json:"name"`
-	DepartmentID    *string `json:"departmentId"`
-	TeamID          *string `json:"teamId"`
-	Phone           *string `json:"phone"`
-	IDNumber        *string `json:"idNumber"`
-	Email           *string `json:"email"`
-	ExperienceYears *int    `json:"experienceYears"`
-	EducationLevel  *string `json:"educationLevel"`
+	Name            *string        `json:"name"`
+	DepartmentID    *string        `json:"departmentId"`
+	TeamID          *string        `json:"teamId"`
+	Phone           *string        `json:"phone"`
+	IDNumber        *string        `json:"idNumber"`
+	Email           *string        `json:"email"`
+	ExperienceYears *int           `json:"experienceYears"`
+	EducationLevel  *string        `json:"educationLevel"`
+	CustomFields    map[string]any `json:"customFields"`
 }
 
 func (h *RecruitmentHandler) PatchCandidate(c *gin.Context) {
@@ -164,6 +192,7 @@ func (h *RecruitmentHandler) PatchCandidate(c *gin.Context) {
 		Email:           body.Email,
 		ExperienceYears: body.ExperienceYears,
 		EducationLevel:  body.EducationLevel,
+		CustomFields:    body.CustomFields,
 	}, recruitmentPIIAuditOpts(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "no institution scope")

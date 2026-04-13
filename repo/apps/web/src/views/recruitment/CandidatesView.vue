@@ -33,6 +33,12 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 
+const filterKeyword = ref('')
+const filterSkills = ref('')
+const filterEdu = ref('')
+const filterMinExp = ref<number | undefined>(undefined)
+const filterMaxExp = ref<number | undefined>(undefined)
+
 const dialogVisible = ref(false)
 const dialogSaving = ref(false)
 const formName = ref('')
@@ -49,6 +55,11 @@ async function load() {
       sortBy: 'created_at',
       sortOrder: 'desc',
     })
+    if (filterKeyword.value.trim()) q.set('keyword', filterKeyword.value.trim())
+    if (filterSkills.value.trim()) q.set('skills', filterSkills.value.trim())
+    if (filterEdu.value.trim()) q.set('educationLevel', filterEdu.value.trim())
+    if (filterMinExp.value != null) q.set('minExperience', String(filterMinExp.value))
+    if (filterMaxExp.value != null) q.set('maxExperience', String(filterMaxExp.value))
     const data = await apiGet<ListResp>(`/api/v1/recruitment/candidates?${q}`)
     rows.value = data.items
     total.value = data.total
@@ -61,6 +72,11 @@ async function load() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function applyFilters() {
+  page.value = 1
   load()
 }
 
@@ -154,6 +170,29 @@ onMounted(load)
       <h2 class="rec-title">Candidates</h2>
       <el-button type="primary" round @click="openCreate">Add candidate</el-button>
     </div>
+
+    <el-card class="rec-filters" shadow="never">
+      <el-form :inline="true" @submit.prevent="load">
+        <el-form-item label="Search">
+          <el-input v-model="filterKeyword" placeholder="Name keyword" clearable @clear="load" />
+        </el-form-item>
+        <el-form-item label="Skills">
+          <el-input v-model="filterSkills" placeholder="GMP, QA" clearable @clear="load" />
+        </el-form-item>
+        <el-form-item label="Education">
+          <el-input v-model="filterEdu" placeholder="e.g. Bachelor" clearable @clear="load" />
+        </el-form-item>
+        <el-form-item label="Exp min">
+          <el-input-number v-model="filterMinExp" :min="0" :max="60" controls-position="right" placeholder="0" />
+        </el-form-item>
+        <el-form-item label="Exp max">
+          <el-input-number v-model="filterMaxExp" :min="0" :max="60" controls-position="right" placeholder="60" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="applyFilters">Filter</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
 
     <el-card class="rec-card" shadow="never">
       <el-table v-loading="loading" :data="rows" stripe empty-text="No candidates to show">
@@ -256,6 +295,11 @@ onMounted(load)
   font-size: 1.25rem;
   font-weight: 650;
   letter-spacing: -0.02em;
+}
+.rec-filters {
+  border-radius: 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  margin-bottom: 1rem;
 }
 .rec-card {
   border-radius: 14px;

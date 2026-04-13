@@ -79,11 +79,13 @@ func (r *ComplianceRepository) ListQualificationsExpiringBetween(ctx context.Con
 func (r *ComplianceRepository) DeactivateExpiredQualifications(ctx context.Context, p *access.Principal, before time.Time) (int64, error) {
 	q := r.db.WithContext(ctx).Model(&model.QualificationProfile{}).
 		Where("status = ? AND expires_on IS NOT NULL AND expires_on < ?", "active", before)
-	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	if p != nil && len(p.Scopes) > 0 && p.Scopes[0].InstitutionID != "*" {
+		q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	}
 	res := q.Updates(map[string]interface{}{
-		"status":          "inactive",
-		"deactivated_at":  time.Now().UTC(),
-		"updated_at":        time.Now().UTC(),
+		"status":         "inactive",
+		"deactivated_at": time.Now().UTC(),
+		"updated_at":     time.Now().UTC(),
 	})
 	if res.Error != nil {
 		return 0, res.Error

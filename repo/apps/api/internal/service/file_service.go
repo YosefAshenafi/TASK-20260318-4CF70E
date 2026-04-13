@@ -498,6 +498,7 @@ func (s *FileService) GetFileObject(ctx context.Context, pr *access.Principal, u
 type LinkFileInput struct {
 	RefType string
 	RefID   string
+	Purpose *string
 }
 
 func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Principal, fileID string, in LinkFileInput, meta AuditRequestMeta) error {
@@ -525,16 +526,29 @@ func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Pr
 	} else {
 		return errors.New("unsupported ref type")
 	}
+	now := time.Now().UTC()
 	ref := &model.FileReference{
 		ID:              uuid.NewString(),
 		FileObjectID:    fileID,
 		RefType:         in.RefType,
 		RefID:           in.RefID,
 		CreatedByUserID: userID,
-		CreatedAt:       time.Now().UTC(),
+		CreatedAt:       now,
 	}
 	if err := s.files.CreateFileReference(ctx, ref); err != nil {
 		return err
+	}
+	if in.RefType == "case" {
+		idx := &model.CaseAttachmentIndex{
+			ID:           uuid.NewString(),
+			CaseID:       in.RefID,
+			FileObjectID: fileID,
+			Purpose:      in.Purpose,
+			CreatedAt:    now,
+		}
+		if err := s.files.CreateCaseAttachmentIndex(ctx, idx); err != nil {
+			return err
+		}
 	}
 	m := meta
 	if m.OperatorUserID == "" {
