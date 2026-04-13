@@ -85,3 +85,11 @@
 **Question:** The prompt defines the business domain and capabilities but does not provide an official application name.
 **Assumption:** Use **PharmaOps Talent & Compliance Platform** as the working product name.
 **Solution:** Apply this name consistently in design and API documentation unless the client provides a preferred official product name later.
+
+---
+
+## 12. Modern UI Look vs. Component Library
+
+**Question:** The team may want a more contemporary visual style (e.g. rounded panels, refined spacing) while staying on Vue.
+**Assumption:** Stay on **Element Plus** as the single component library; add a **custom theme** (CSS variables / scoped overrides) for typography, radii, shadows, and layout. Do **not** introduce a parallel UI kit (e.g. shadcn/React stacks) to avoid duplicate systems and offline dependency risk.
+**Solution:** Ship theme tokens in the web app (e.g. `element-theme.css`) and document the visual language in `docs/design.md` §5.3.

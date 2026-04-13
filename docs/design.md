@@ -121,6 +121,7 @@ No cloud-managed dependencies are required for normal operation.
 * all destructive or high-impact actions require secondary confirmation dialog
 * operations return clear inline + toast feedback (success/failure/partial)
 * sensitive list fields use masking by default
+* **Visual language:** Element Plus remains the component library; the product uses a **custom theme layer** (CSS variables: primary teal palette, rounded surfaces ~12–16px, soft elevation, full-bleed app layout) for a modern enterprise admin look without adding a second UI framework. External font CDNs are avoided to support offline intranet builds.
 
 ### 5.4 Major UI Components
 

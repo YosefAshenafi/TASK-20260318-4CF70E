@@ -4,6 +4,7 @@
     "frontend_language": "JavaScript/TypeScript",
     "backend_language": "Go",
     "frontend_framework": "Vue.js 3",
+    "frontend_ui_theme": "Element Plus with custom CSS theme tokens (modern enterprise look; no extra UI framework)",
     "backend_framework": "Gin",
     "database": "MySQL",
     "orm": "GORM",

@@ -1,0 +1,30 @@
+/**
+ * Element Plus visual tokens — pharma / enterprise, modern surfaces.
+ * Loaded after element-plus CSS so these override defaults.
+ */
+:root {
+  color-scheme: light;
+
+  /* Brand: confident teal (trust, clinical ops) */
+  --el-color-primary: #0d9488;
+  --el-color-primary-light-3: #14b8a6;
+  --el-color-primary-light-5: #5eead4;
+  --el-color-primary-light-7: #99f6e4;
+  --el-color-primary-light-8: #ccfbf1;
+  --el-color-primary-light-9: #f0fdfa;
+  --el-color-primary-dark-2: #0f766e;
+
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+
+  --el-font-size-base: 15px;
+  --el-font-size-small: 13px;
+  --el-font-size-large: 16px;
+
+  --el-box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --el-box-shadow-light: 0 4px 24px rgba(15, 23, 42, 0.08);
+  --el-box-shadow-lighter: 0 12px 40px rgba(15, 23, 42, 0.1);
+
+  --el-fill-color-blank: #ffffff;
+}
