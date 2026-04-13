@@ -76,10 +76,6 @@ func (s *Server) Run() error {
 		_ = os.MkdirAll(s.cfg.FileStorageRoot, 0o700)
 	}
 
-	r.GET("/healthz", func(c *gin.Context) {
-		c.Status(200)
-	})
-
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/health", healthH.Get)

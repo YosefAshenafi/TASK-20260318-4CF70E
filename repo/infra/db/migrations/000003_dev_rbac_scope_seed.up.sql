@@ -1,4 +1,5 @@
--- Dev seed: institution hierarchy, data scope, system_admin role, full_access permission, admin bindings.
+-- Dev seed: institution hierarchy and a base data scope only.
+-- Security hardening: no privileged role/permission/user bindings are seeded.
 
 SET NAMES utf8mb4;
 
@@ -38,42 +39,3 @@ VALUES (
   NULL,
   CURRENT_TIMESTAMP(3)
 ) ON DUPLICATE KEY UPDATE scope_key = VALUES(scope_key);
-
-INSERT INTO roles (id, slug, name, description, created_at, updated_at)
-VALUES (
-  '10000000-0000-4000-8000-000000000020',
-  'system_admin',
-  'System Administrator',
-  'Full application access (dev seed)',
-  CURRENT_TIMESTAMP(3),
-  CURRENT_TIMESTAMP(3)
-) ON DUPLICATE KEY UPDATE name = VALUES(name);
-
-INSERT INTO permissions (id, code, description, created_at)
-VALUES (
-  '10000000-0000-4000-8000-000000000030',
-  'system.full_access',
-  'Bypass permission checks for all route-level gates (dev)',
-  CURRENT_TIMESTAMP(3)
-) ON DUPLICATE KEY UPDATE description = VALUES(description);
-
-INSERT INTO role_permissions (role_id, permission_id, created_at)
-VALUES (
-  '10000000-0000-4000-8000-000000000020',
-  '10000000-0000-4000-8000-000000000030',
-  CURRENT_TIMESTAMP(3)
-) ON DUPLICATE KEY UPDATE role_id = role_id;
-
-INSERT INTO user_roles (user_id, role_id, created_at)
-VALUES (
-  '00000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000020',
-  CURRENT_TIMESTAMP(3)
-) ON DUPLICATE KEY UPDATE user_id = user_id;
-
-INSERT INTO user_data_scopes (user_id, data_scope_id, created_at)
-VALUES (
-  '00000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000010',
-  CURRENT_TIMESTAMP(3)
-) ON DUPLICATE KEY UPDATE user_id = user_id;

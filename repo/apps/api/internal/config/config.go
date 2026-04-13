@@ -15,7 +15,7 @@ type Config struct {
 	FileStorageRoot  string
 	// PIIAESKeyHex is 64 hex chars (32 bytes) for AES-256 candidate PII at rest (PII_AES_KEY_HEX).
 	PIIAESKeyHex string
-	// HealthCheckToken when non-empty requires X-Internal-Health-Token on GET /api/v1/health (HEALTH_CHECK_TOKEN).
+	// HealthCheckToken is required and gates GET /api/v1/health via X-Internal-Health-Token (HEALTH_CHECK_TOKEN).
 	HealthCheckToken string
 }
 

@@ -19,8 +19,12 @@ func NewHealthHandler(db *gorm.DB, healthCheckToken string) *HealthHandler {
 }
 
 func (h *HealthHandler) Get(c *gin.Context) {
-	if h.checkToken != "" && c.GetHeader("X-Internal-Health-Token") != h.checkToken {
-		response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing health token")
+	if h.checkToken == "" {
+		response.Error(c, http.StatusServiceUnavailable, "UNAVAILABLE", "health check token is not configured")
+		return
+	}
+	if c.GetHeader("X-Internal-Health-Token") != h.checkToken {
+		response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid health token")
 		return
 	}
 	sqlDB, err := h.db.DB()

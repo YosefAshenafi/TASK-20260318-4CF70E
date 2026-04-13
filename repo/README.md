@@ -2,14 +2,11 @@
 
 Run and verify everything through **Docker** from this directory (`repo/`).
 
-## Default Login (Development)
+## Initial Access Provisioning
 
-Use the seeded development account to access the app:
+No default credentialed user is seeded by migrations.
 
-- Username: `admin`
-- Password: `password`
-
-These credentials are created by migrations and are intended for local development only.
+Create users via RBAC APIs (or a dedicated provisioning script) after initial migration.
 
 ## Stack
 
@@ -39,7 +36,7 @@ All configuration is environment-driven. See [`.env.example`](.env.example) for 
 | `APP_ENV` | No | `development` | `development` or `production` (controls Gin mode) |
 | `PII_AES_KEY_HEX` | **Yes** | *(none)* | 64 hex chars (32 bytes AES-256) for candidate PII encryption at rest. Generate: `openssl rand -hex 32` |
 | `FILE_STORAGE_ROOT` | No | `$TMPDIR/pharmaops-uploads` | Absolute path for file uploads and chunks |
-| `HEALTH_CHECK_TOKEN` | No | *(empty)* | When set, `/api/v1/health` requires `X-Internal-Health-Token` |
+| `HEALTH_CHECK_TOKEN` | **Yes** | *(none)* | Required internal token for `/api/v1/health` via `X-Internal-Health-Token` |
 
 Docker Compose injects defaults for the API service. For local development outside Docker, copy `.env.example` to `.env` and source it.
 

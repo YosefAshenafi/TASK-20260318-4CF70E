@@ -1,9 +1,12 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -105,6 +108,7 @@ var (
 	resumeEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	resumePhoneRe = regexp.MustCompile(`(?:\+?\d[\d\-\s()]{8,}\d)`)
 	resumeIDRe    = regexp.MustCompile(`(?i)(?:id|identity|passport|ssn)[^\w]{0,4}([a-z0-9\-]{6,32})`)
+	resumeTagRe   = regexp.MustCompile(`<[^>]+>`)
 )
 
 func inferCandidateNameFromResume(fileName, body string) string {
@@ -140,8 +144,62 @@ func inferSkillsFromResume(body string) []string {
 	return out
 }
 
-func parseResumeRow(fileID, fileName string, body []byte) (ImportStagingRow, []importRowError) {
-	text := strings.ReplaceAll(string(body), "\r\n", "\n")
+var ErrResumeParseUnsupported = errors.New("resume parse format unsupported")
+
+func decodeDocxText(payload []byte) (string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		return "", err
+	}
+	var chunks []string
+	replacer := strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&apos;", "'")
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, "word/") || !strings.HasSuffix(f.Name, ".xml") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		raw, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			continue
+		}
+		text := resumeTagRe.ReplaceAllString(string(raw), " ")
+		text = replacer.Replace(text)
+		text = strings.Join(strings.Fields(text), " ")
+		if text != "" {
+			chunks = append(chunks, text)
+		}
+	}
+	if len(chunks) == 0 {
+		return "", ErrImportValidationFailed
+	}
+	return strings.Join(chunks, "\n"), nil
+}
+
+func extractResumeText(fileName string, payload []byte, mimeType *string) (string, error) {
+	mime := ""
+	if mimeType != nil {
+		mime = strings.ToLower(strings.TrimSpace(*mimeType))
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch {
+	case mime == "text/plain" || ext == ".txt":
+		return strings.ReplaceAll(string(payload), "\r\n", "\n"), nil
+	case mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext == ".docx":
+		return decodeDocxText(payload)
+	case mime == "application/pdf" || ext == ".pdf":
+		return "", ErrResumeParseUnsupported
+	case mime == "application/msword" || ext == ".doc":
+		return "", ErrResumeParseUnsupported
+	default:
+		return "", ErrResumeParseUnsupported
+	}
+}
+
+func parseResumeRow(fileID, fileName, text string) (ImportStagingRow, []importRowError) {
 	name := inferCandidateNameFromResume(fileName, text)
 	var phone *string
 	var idNum *string
@@ -210,7 +268,17 @@ func (s *RecruitmentService) parseResumeFiles(ctx context.Context, p *access.Pri
 			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "failed to read resume file content"})
 			continue
 		}
-		row, rowWarns := parseResumeRow(fid, filepath.Base(obj.StoragePath), payload)
+		fileName := filepath.Base(obj.StoragePath)
+		text, err := extractResumeText(fileName, payload, obj.MimeType)
+		if errors.Is(err, ErrResumeParseUnsupported) {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "resume format is not supported for structured extraction"})
+			continue
+		}
+		if err != nil {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "failed to parse resume text"})
+			continue
+		}
+		row, rowWarns := parseResumeRow(fid, fileName, text)
 		for _, w := range rowWarns {
 			w.RowIndex = idx
 			warns = append(warns, w)
