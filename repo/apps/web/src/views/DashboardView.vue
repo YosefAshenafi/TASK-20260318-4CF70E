@@ -8,7 +8,7 @@ const auth = useAuthStore()
   <el-card class="panel" shadow="never">
     <h2>Welcome</h2>
     <p v-if="auth.username">Signed in as <strong>{{ auth.username }}</strong>.</p>
-    <p class="muted">Use the sidebar to open modules. Menus follow RBAC once the API is connected.</p>
+    <p class="muted">Use the sidebar to open modules.</p>
   </el-card>
 </template>
 

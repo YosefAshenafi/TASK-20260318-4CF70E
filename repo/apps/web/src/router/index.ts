@@ -25,25 +25,25 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'recruitment/candidates',
         name: 'recruitment-candidates',
-        component: () => import('@/views/ModulePlaceholderView.vue'),
+        component: () => import('@/views/recruitment/CandidatesView.vue'),
         meta: { title: 'Candidates', permission: 'recruitment.view' },
       },
       {
         path: 'recruitment/positions',
         name: 'recruitment-positions',
-        component: () => import('@/views/ModulePlaceholderView.vue'),
+        component: () => import('@/views/recruitment/PositionsView.vue'),
         meta: { title: 'Positions', permission: 'recruitment.view' },
       },
       {
         path: 'compliance/qualifications',
         name: 'compliance-qualifications',
-        component: () => import('@/views/ModulePlaceholderView.vue'),
+        component: () => import('@/views/compliance/QualificationsView.vue'),
         meta: { title: 'Qualifications', permission: 'compliance.view' },
       },
       {
         path: 'compliance/restrictions',
         name: 'compliance-restrictions',
-        component: () => import('@/views/ModulePlaceholderView.vue'),
+        component: () => import('@/views/compliance/RestrictionsView.vue'),
         meta: { title: 'Purchase restrictions', permission: 'compliance.view' },
       },
       {

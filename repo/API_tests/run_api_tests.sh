@@ -40,4 +40,44 @@ echo "$ME_JSON" | grep -q 'system.full_access' || {
   exit 1
 }
 
+echo "[API] GET $BASE/api/v1/recruitment/candidates (Step 4b recruitment)"
+CAND_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/recruitment/candidates?page=1&pageSize=10")"
+echo "$CAND_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] recruitment candidates expected OK"
+  exit 1
+}
+echo "$CAND_JSON" | grep -q '"items"' || {
+  echo "[API] recruitment list expected items array"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/recruitment/positions"
+POS_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/recruitment/positions?page=1&pageSize=10")"
+echo "$POS_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] recruitment positions expected OK"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/compliance/qualifications (Step 4b compliance)"
+QUAL_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/compliance/qualifications?page=1&pageSize=10")"
+echo "$QUAL_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] compliance qualifications expected OK"
+  exit 1
+}
+echo "$QUAL_JSON" | grep -q '"items"' || {
+  echo "[API] compliance qualifications expected items array"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/compliance/restrictions"
+REST_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/compliance/restrictions?page=1&pageSize=10")"
+echo "$REST_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] compliance restrictions expected OK"
+  exit 1
+}
+
 echo "[API] Smoke checks passed."

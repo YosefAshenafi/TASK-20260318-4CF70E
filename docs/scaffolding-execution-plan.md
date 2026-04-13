@@ -66,6 +66,8 @@ Docker checkpoint:
 Step **4** delivers **integration**: auth, RBAC/data scope, envelope, DB connectivity.  
 Step **4b** delivers **product**: real screens and APIs from `docs/design.md` and `docs/api-spec.md`, replacing `ModulePlaceholderView` and stub routes with working flows.
 
+Implementation must **trace to `docs/design.md`** (routes §5.2, UI rules §5.3, domain §7.x, data §8 as applicable). Do not invent off-spec product behavior; if the design is silent on a detail, reconcile with `docs/api-spec.md` or clarify before coding.
+
 Work in **domain slices** (order flexible; complete one slice before claiming the next):
 
 - **Recruitment** — candidates, positions, imports, duplicates/merge, matching (see design §7.2, §5.4).
