@@ -70,6 +70,8 @@ func (PositionRequirement) TableName() string { return "position_requirements" }
 type CandidateImportBatch struct {
 	ID                   string     `gorm:"column:id;type:char(36);primaryKey"`
 	InstitutionID        string     `gorm:"column:institution_id;type:char(36);not null;index"`
+	DepartmentID         *string    `gorm:"column:department_id;type:char(36)"`
+	TeamID               *string    `gorm:"column:team_id;type:char(36)"`
 	Status               string     `gorm:"column:status;not null;default:pending"`
 	MappingJSON          []byte     `gorm:"column:mapping_json"`
 	ValidationReportJSON []byte     `gorm:"column:validation_report_json"`

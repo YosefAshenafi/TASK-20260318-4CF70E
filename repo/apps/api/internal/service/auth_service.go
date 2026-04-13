@@ -38,29 +38,38 @@ func tokenSHA256Hex(opaque string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *AuthService) Login(ctx context.Context, username, password string, clientIP, userAgent *string) (token string, expiresAt time.Time, err error) {
+// LoginSuccess is returned after a successful password check and session creation.
+type LoginSuccess struct {
+	Token     string
+	ExpiresAt time.Time
+	UserID    string
+	Username  string
+}
+
+func (s *AuthService) Login(ctx context.Context, username, password string, clientIP, userAgent *string) (LoginSuccess, error) {
+	var out LoginSuccess
 	if len(password) < 8 {
-		return "", time.Time{}, ErrPasswordTooShort
+		return out, ErrPasswordTooShort
 	}
 	u, err := s.users.FindByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", time.Time{}, ErrInvalidCredentials
+			return out, ErrInvalidCredentials
 		}
-		return "", time.Time{}, err
+		return out, err
 	}
 	if !u.IsActive {
-		return "", time.Time{}, ErrAccountDisabled
+		return out, ErrAccountDisabled
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
-		return "", time.Time{}, ErrInvalidCredentials
+		return out, ErrInvalidCredentials
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return "", time.Time{}, err
+		return out, err
 	}
 	opaque := hex.EncodeToString(raw)
-	expiresAt = time.Now().UTC().Add(s.cfg.SessionTTL)
+	expiresAt := time.Now().UTC().Add(s.cfg.SessionTTL)
 	sess := &model.Session{
 		ID:        uuid.NewString(),
 		UserID:    u.ID,
@@ -71,9 +80,13 @@ func (s *AuthService) Login(ctx context.Context, username, password string, clie
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.sessions.Create(ctx, sess); err != nil {
-		return "", time.Time{}, err
+		return out, err
 	}
-	return opaque, expiresAt, nil
+	out.Token = opaque
+	out.ExpiresAt = expiresAt
+	out.UserID = u.ID
+	out.Username = u.Username
+	return out, nil
 }
 
 func (s *AuthService) Logout(ctx context.Context, opaqueToken string) error {

@@ -22,6 +22,8 @@ type restrictionRule struct {
 type QualificationDTO struct {
 	ID             string         `json:"id"`
 	InstitutionID  string         `json:"institutionId"`
+	DepartmentID   *string        `json:"departmentId,omitempty"`
+	TeamID         *string        `json:"teamId,omitempty"`
 	ClientID       string         `json:"clientId"`
 	DisplayName    string         `json:"displayName"`
 	Status         string         `json:"status"`
@@ -36,6 +38,8 @@ type QualificationDTO struct {
 type RestrictionDTO struct {
 	ID            string         `json:"id"`
 	InstitutionID string         `json:"institutionId"`
+	DepartmentID  *string        `json:"departmentId,omitempty"`
+	TeamID        *string        `json:"teamId,omitempty"`
 	ClientID      string         `json:"clientId"`
 	MedicationID  *string        `json:"medicationId,omitempty"`
 	Rule          map[string]any `json:"rule"`
@@ -49,6 +53,8 @@ type ViolationDTO struct {
 	ID            string         `json:"id"`
 	RestrictionID *string        `json:"restrictionId,omitempty"`
 	InstitutionID string         `json:"institutionId"`
+	DepartmentID  *string        `json:"departmentId,omitempty"`
+	TeamID        *string        `json:"teamId,omitempty"`
 	ClientID      string         `json:"clientId"`
 	MedicationID  *string        `json:"medicationId,omitempty"`
 	Details       map[string]any `json:"details,omitempty"`
@@ -129,6 +135,8 @@ func toQualificationDTO(q *model.QualificationProfile) QualificationDTO {
 	dto := QualificationDTO{
 		ID:            q.ID,
 		InstitutionID: q.InstitutionID,
+		DepartmentID:  q.DepartmentID,
+		TeamID:        q.TeamID,
 		ClientID:      q.ClientID,
 		DisplayName:   q.DisplayName,
 		Status:        q.Status,
@@ -151,6 +159,8 @@ func toRestrictionDTO(r *model.PurchaseRestriction) RestrictionDTO {
 	return RestrictionDTO{
 		ID:            r.ID,
 		InstitutionID: r.InstitutionID,
+		DepartmentID:  r.DepartmentID,
+		TeamID:        r.TeamID,
 		ClientID:      r.ClientID,
 		MedicationID:  r.MedicationID,
 		Rule:          parseRuleMap(r.RuleJSON),
@@ -165,6 +175,8 @@ func toViolationDTO(v *model.RestrictionViolationRecord) ViolationDTO {
 		ID:            v.ID,
 		RestrictionID: v.RestrictionID,
 		InstitutionID: v.InstitutionID,
+		DepartmentID:  v.DepartmentID,
+		TeamID:        v.TeamID,
 		ClientID:      v.ClientID,
 		MedicationID:  v.MedicationID,
 		Details:       parseMetadata(v.DetailsJSON),
@@ -202,6 +214,8 @@ func (s *ComplianceService) GetQualification(ctx context.Context, p *access.Prin
 // CreateQualificationInput for POST.
 type CreateQualificationInput struct {
 	InstitutionID string
+	DepartmentID  *string
+	TeamID        *string
 	ClientID      string
 	DisplayName   string
 	ExpiresOn     *string
@@ -212,7 +226,11 @@ func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.P
 	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	if !p.AllowsInstitution(in.InstitutionID) {
+	dept, team := in.DepartmentID, in.TeamID
+	if dept == nil && team == nil {
+		dept, team = access.DefaultOrgAssignment(p, in.InstitutionID)
+	}
+	if !p.RowVisible(in.InstitutionID, dept, team) {
 		return nil, ErrForbiddenScope
 	}
 	now := time.Now().UTC()
@@ -236,6 +254,8 @@ func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.P
 	q := &model.QualificationProfile{
 		ID:            uuid.NewString(),
 		InstitutionID: in.InstitutionID,
+		DepartmentID:  dept,
+		TeamID:        team,
 		ClientID:      in.ClientID,
 		DisplayName:   in.DisplayName,
 		Status:        "active",
@@ -414,13 +434,28 @@ func (s *ComplianceService) ListExpiringQualifications(ctx context.Context, p *a
 }
 
 // RunQualificationExpirationJob deactivates active qualifications whose expires_on is before today.
-func (s *ComplianceService) RunQualificationExpirationJob(ctx context.Context, p *access.Principal) (deactivated int64, err error) {
+func (s *ComplianceService) RunQualificationExpirationJob(ctx context.Context, p *access.Principal, meta AuditRequestMeta) (deactivated int64, err error) {
 	if err := requireScope(p); err != nil {
 		return 0, err
 	}
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	return s.repo.DeactivateExpiredQualifications(ctx, p, startOfToday)
+	n, err := s.repo.DeactivateExpiredQualifications(ctx, p, startOfToday)
+	if err != nil {
+		return 0, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "compliance",
+		Operation:  "qualification.job.expiration_sweep",
+		TargetType: "qualification_job",
+		TargetID:   "expiration",
+		After: map[string]any{
+			"deactivatedCount": n,
+			"beforeDate":       startOfToday.Format("2006-01-02"),
+		},
+		Meta: meta,
+	})
+	return n, nil
 }
 
 func (s *ComplianceService) ListRestrictions(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]RestrictionDTO, int64, int, int, error) {
@@ -453,6 +488,8 @@ func (s *ComplianceService) GetRestriction(ctx context.Context, p *access.Princi
 // CreateRestrictionInput for POST.
 type CreateRestrictionInput struct {
 	InstitutionID string
+	DepartmentID  *string
+	TeamID        *string
 	ClientID      string
 	MedicationID  *string
 	Rule          map[string]any
@@ -463,7 +500,11 @@ func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Pri
 	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	if !p.AllowsInstitution(in.InstitutionID) {
+	dept, team := in.DepartmentID, in.TeamID
+	if dept == nil && team == nil {
+		dept, team = access.DefaultOrgAssignment(p, in.InstitutionID)
+	}
+	if !p.RowVisible(in.InstitutionID, dept, team) {
 		return nil, ErrForbiddenScope
 	}
 	ruleBytes, err := json.Marshal(in.Rule)
@@ -475,6 +516,8 @@ func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Pri
 	row := &model.PurchaseRestriction{
 		ID:            uuid.NewString(),
 		InstitutionID: in.InstitutionID,
+		DepartmentID:  dept,
+		TeamID:        team,
 		ClientID:      in.ClientID,
 		MedicationID:  in.MedicationID,
 		RuleJSON:      ruleBytes,
@@ -491,7 +534,7 @@ func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Pri
 	}
 	dto := toRestrictionDTO(loaded)
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
-		Module:     "fees",
+		Module:     "compliance",
 		Operation:  "restriction.create",
 		TargetType: "restriction",
 		TargetID:   dto.ID,
@@ -543,7 +586,7 @@ func (s *ComplianceService) UpdateRestriction(ctx context.Context, p *access.Pri
 		return nil, err
 	}
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
-		Module:     "fees",
+		Module:     "compliance",
 		Operation:  "restriction.update",
 		TargetType: "restriction",
 		TargetID:   id,
@@ -600,10 +643,11 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	if !p.AllowsInstitution(in.InstitutionID) {
+	dept, team := access.DefaultOrgAssignment(p, in.InstitutionID)
+	if !p.RowVisible(in.InstitutionID, dept, team) {
 		return nil, ErrForbiddenScope
 	}
-	rules, err := s.repo.ListActiveRestrictionsForPurchase(ctx, in.InstitutionID, in.ClientID, in.MedicationID)
+	rules, err := s.repo.ListActiveRestrictionsForPurchase(ctx, p, in.InstitutionID, in.ClientID, in.MedicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -629,6 +673,8 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 					ID:             uuid.NewString(),
 					RestrictionID:  &row.ID,
 					InstitutionID:  in.InstitutionID,
+					DepartmentID:   row.DepartmentID,
+					TeamID:         row.TeamID,
 					ClientID:       in.ClientID,
 					MedicationID:   medPtr,
 					DetailsJSON:    details,
@@ -646,7 +692,7 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 		}
 		if rule.FrequencyDays > 0 {
 			since := in.PurchaseAt.Add(-time.Duration(rule.FrequencyDays) * 24 * time.Hour)
-			n, err := s.repo.CountPurchaseRecordsSince(ctx, in.InstitutionID, in.ClientID, medPtr, since)
+			n, err := s.repo.CountPurchaseRecordsSince(ctx, in.InstitutionID, in.ClientID, medPtr, since, row.DepartmentID, row.TeamID)
 			if err != nil {
 				return nil, err
 			}
@@ -657,6 +703,8 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 					ID:             uuid.NewString(),
 					RestrictionID:  &row.ID,
 					InstitutionID:  in.InstitutionID,
+					DepartmentID:   row.DepartmentID,
+					TeamID:         row.TeamID,
 					ClientID:       in.ClientID,
 					MedicationID:   medPtr,
 					DetailsJSON:    details,
@@ -670,6 +718,8 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 	rec := &model.CompliancePurchaseRecord{
 		ID:             uuid.NewString(),
 		InstitutionID:  in.InstitutionID,
+		DepartmentID:   dept,
+		TeamID:         team,
 		ClientID:       in.ClientID,
 		MedicationID:   medPtr,
 		RecordedAt:     in.PurchaseAt.UTC(),

@@ -78,3 +78,19 @@ func TestPrincipal_RowVisible(t *testing.T) {
 		}
 	})
 }
+
+func TestDefaultOrgAssignment(t *testing.T) {
+	inst := "10000000-0000-4000-8000-000000000001"
+	dept := "d1"
+	deptPtr := &dept
+	p := &Principal{Scopes: []Scope{{InstitutionID: inst, DepartmentID: deptPtr}}}
+	d, tm := DefaultOrgAssignment(p, inst)
+	if d != deptPtr || tm != nil {
+		t.Fatalf("narrow scope: got dept=%v team=%v", d, tm)
+	}
+	p2 := &Principal{Scopes: []Scope{{InstitutionID: inst}}}
+	d2, tm2 := DefaultOrgAssignment(p2, inst)
+	if d2 != nil || tm2 != nil {
+		t.Fatalf("institution-wide scope")
+	}
+}

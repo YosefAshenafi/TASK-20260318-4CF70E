@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"pharmaops/api/internal/access"
+	"pharmaops/api/internal/oplog"
 	"pharmaops/api/internal/response"
 )
 
@@ -20,6 +21,7 @@ func RequirePermission(code string) gin.HandlerFunc {
 		}
 		principal := p.(*access.Principal)
 		if !principal.Has(code) {
+			oplog.PermissionDenied(c.GetString("requestId"), c.GetString("userID"), c.ClientIP(), code)
 			response.Error(c, http.StatusForbidden, "FORBIDDEN_PERMISSION", "missing permission: "+code)
 			c.Abort()
 			return

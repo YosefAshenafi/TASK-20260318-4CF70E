@@ -37,6 +37,8 @@ type MatchScoreDTO struct {
 type ImportBatchDTO struct {
 	ID                   string          `json:"id"`
 	InstitutionID        string          `json:"institutionId"`
+	DepartmentID         *string         `json:"departmentId,omitempty"`
+	TeamID               *string         `json:"teamId,omitempty"`
 	Status               string          `json:"status"`
 	ValidationReport     json.RawMessage `json:"validationReport,omitempty"`
 	CreatedByUserID      string          `json:"createdByUserId"`
@@ -83,34 +85,10 @@ type importRowError struct {
 	Message  string `json:"message"`
 }
 
-// defaultOrgForInstitution picks department/team for import-created rows when the client did not specify them.
-// Institution-wide scope yields nil, nil; otherwise the first matching narrow scope for that institution is used.
-func defaultOrgForInstitution(p *access.Principal, institutionID string) (deptID, teamID *string) {
-	if p == nil {
-		return nil, nil
-	}
-	var narrow *access.Scope
-	for i := range p.Scopes {
-		s := &p.Scopes[i]
-		if s.InstitutionID != institutionID {
-			continue
-		}
-		if s.DepartmentID == nil && s.TeamID == nil {
-			return nil, nil
-		}
-		if narrow == nil {
-			narrow = s
-		}
-	}
-	if narrow == nil {
-		return nil, nil
-	}
-	return narrow.DepartmentID, narrow.TeamID
-}
-
 // CreateImportBatch stages rows for a later commit.
 func (s *RecruitmentService) CreateImportBatch(ctx context.Context, p *access.Principal, userID string, institutionID string, rows []ImportStagingRow) (*ImportBatchDTO, error) {
-	if !p.AllowsInstitution(institutionID) {
+	dept, team := access.DefaultOrgAssignment(p, institutionID)
+	if !p.RowVisible(institutionID, dept, team) {
 		return nil, ErrForbiddenScope
 	}
 	if len(rows) == 0 {
@@ -137,6 +115,8 @@ func (s *RecruitmentService) CreateImportBatch(ctx context.Context, p *access.Pr
 	b := &model.CandidateImportBatch{
 		ID:                   uuid.NewString(),
 		InstitutionID:        institutionID,
+		DepartmentID:         dept,
+		TeamID:               team,
 		Status:               "pending",
 		MappingJSON:          raw,
 		ValidationReportJSON: validJSON,
@@ -153,6 +133,8 @@ func toImportDTO(b *model.CandidateImportBatch) *ImportBatchDTO {
 	d := &ImportBatchDTO{
 		ID:              b.ID,
 		InstitutionID:   b.InstitutionID,
+		DepartmentID:    b.DepartmentID,
+		TeamID:          b.TeamID,
 		Status:          b.Status,
 		CreatedByUserID: b.CreatedByUserID,
 		CreatedAt:       b.CreatedAt.UTC().Format(time.RFC3339),
@@ -195,7 +177,7 @@ func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Pr
 	if err := json.Unmarshal(b.MappingJSON, &st); err != nil {
 		return nil, ErrImportValidationFailed
 	}
-	defDept, defTeam := defaultOrgForInstitution(p, b.InstitutionID)
+	defDept, defTeam := access.DefaultOrgAssignment(p, b.InstitutionID)
 	created := 0
 	for _, row := range st.Rows {
 		if strings.TrimSpace(row.Name) == "" {

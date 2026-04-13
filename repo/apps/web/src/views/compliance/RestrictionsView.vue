@@ -216,9 +216,20 @@ async function submitCreate() {
 }
 
 async function toggleActive(row: RestrictionRow) {
+  const next = !row.isActive
+  const verb = next ? 'activate' : 'deactivate'
+  try {
+    await ElMessageBox.confirm(
+      `This will ${verb} the restriction and may affect purchase checks for this client rule. Continue?`,
+      'Confirm restriction change',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
   try {
     await apiPatch<RestrictionRow>(`/api/v1/compliance/restrictions/${row.id}`, {
-      isActive: !row.isActive,
+      isActive: next,
     })
     ElMessage.success('Updated.')
     await load()

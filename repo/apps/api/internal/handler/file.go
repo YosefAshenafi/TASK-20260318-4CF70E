@@ -179,8 +179,14 @@ func (h *FileHandler) GetUpload(c *gin.Context) {
 }
 
 func (h *FileHandler) GetFile(c *gin.Context) {
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	uid := c.GetString("userID")
 	id := c.Param("fileId")
-	dto, err := h.svc.GetFile(c.Request.Context(), id)
+	dto, err := h.svc.GetFile(c.Request.Context(), pr, uid, id)
 	if errors.Is(err, service.ErrFileNotFound) {
 		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "file not found")
 		return
@@ -193,8 +199,14 @@ func (h *FileHandler) GetFile(c *gin.Context) {
 }
 
 func (h *FileHandler) DownloadFile(c *gin.Context) {
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	uid := c.GetString("userID")
 	id := c.Param("fileId")
-	fo, err := h.svc.GetFileObject(c.Request.Context(), id)
+	fo, err := h.svc.GetFileObject(c.Request.Context(), pr, uid, id)
 	if errors.Is(err, service.ErrFileNotFound) {
 		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "file not found")
 		return
@@ -249,8 +261,14 @@ func (h *FileHandler) LinkFile(c *gin.Context) {
 }
 
 func (h *FileHandler) ListFiles(c *gin.Context) {
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	uid := c.GetString("userID")
 	page, pageSize, offset := ParsePagination(c)
-	items, total, err := h.svc.ListFiles(c.Request.Context(), offset, pageSize)
+	items, total, err := h.svc.ListFiles(c.Request.Context(), pr, uid, offset, pageSize)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list files")
 		return

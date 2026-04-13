@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
 
 	"pharmaops/api/internal/model"
+	"pharmaops/api/internal/oplog"
 	"pharmaops/api/internal/repository"
 )
 
@@ -65,6 +68,49 @@ func DTOToAuditMap(v any) map[string]any {
 		return nil
 	}
 	return m
+}
+
+func auditJSONEqual(a, b any) bool {
+	ba, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(ba) == string(bb)
+}
+
+// mutationChangedKeys lists top-level keys whose values differ between before and after snapshots.
+func mutationChangedKeys(before, after map[string]any) []string {
+	if before == nil || after == nil {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	for k := range before {
+		keys[k] = struct{}{}
+	}
+	for k := range after {
+		keys[k] = struct{}{}
+	}
+	var out []string
+	for k := range keys {
+		if k == "_changedFields" {
+			continue
+		}
+		bv, bok := before[k]
+		av, aok := after[k]
+		if !bok || !aok {
+			out = append(out, k)
+			continue
+		}
+		if !auditJSONEqual(bv, av) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 type AuditService struct {
@@ -176,8 +222,15 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 			return err
 		}
 	}
-	if len(in.After) > 0 {
-		if afterJSON, err = json.Marshal(in.After); err != nil {
+	afterForAudit := in.After
+	if len(in.Before) > 0 && len(in.After) > 0 {
+		if changed := mutationChangedKeys(in.Before, in.After); len(changed) > 0 {
+			afterForAudit = maps.Clone(in.After)
+			afterForAudit["_changedFields"] = changed
+		}
+	}
+	if len(afterForAudit) > 0 {
+		if afterJSON, err = json.Marshal(afterForAudit); err != nil {
 			return err
 		}
 	}
@@ -197,6 +250,7 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 		row.RequestID = &rid
 	}
 	row.RequestSource = in.Meta.RequestSource
+	oplog.AuditWrite(in.Meta.RequestID, in.Meta.OperatorUserID, in.Module, in.Operation, in.TargetType, in.TargetID)
 	return s.repo.CreateAuditLog(ctx, row)
 }
 

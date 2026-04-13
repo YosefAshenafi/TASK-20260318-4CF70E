@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/model"
 )
 
@@ -119,17 +120,72 @@ func (r *FileRepository) DeleteChunksForSession(ctx context.Context, uploadSessi
 	return r.db.WithContext(ctx).Where("upload_session_id = ?", uploadSessionID).Delete(&model.FileChunk{}).Error
 }
 
-func (r *FileRepository) ListFileObjects(ctx context.Context, offset, limit int) ([]model.FileObject, int64, error) {
+// applyAccessibleFileScope limits file_objects to rows linked to a case in the principal's data scope
+// or to an upload session merged by this user (unlinked uploads).
+func (r *FileRepository) applyAccessibleFileScope(ctx context.Context, db *gorm.DB, p *access.Principal, userID string) *gorm.DB {
+	uploadSub := r.db.WithContext(ctx).Model(&model.UploadSession{}).
+		Select("merged_file_id").
+		Where("user_id = ? AND merged_file_id IS NOT NULL", userID)
+	scopeExpr, scopeArgs, ok := buildDataScopeExpr(p, "c.institution_id", "c.department_id", "c.team_id")
+	if !ok {
+		return db.Where("file_objects.id IN (?)", uploadSub)
+	}
+	caseSub := r.db.WithContext(ctx).Model(&model.FileObject{}).
+		Select("DISTINCT file_objects.id").
+		Joins("INNER JOIN file_references fr ON fr.file_object_id = file_objects.id").
+		Joins("INNER JOIN cases c ON fr.ref_type = 'case' AND fr.ref_id = c.id").
+		Where(scopeExpr, scopeArgs...)
+	return db.Where("(file_objects.id IN (?) OR file_objects.id IN (?))", caseSub, uploadSub)
+}
+
+// ListAccessibleFileObjects returns file metadata visible to the caller (case-linked within scope or own uploads).
+func (r *FileRepository) ListAccessibleFileObjects(ctx context.Context, p *access.Principal, userID string, offset, limit int) ([]model.FileObject, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.FileObject{})
+	base = r.applyAccessibleFileScope(ctx, base, p, userID)
 	var total int64
-	if err := r.db.WithContext(ctx).Model(&model.FileObject{}).Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.FileObject
-	err := r.db.WithContext(ctx).Order("created_at DESC").Offset(offset).Limit(limit).Find(&rows).Error
+	err := r.db.WithContext(ctx).Model(&model.FileObject{}).
+		Scopes(func(db *gorm.DB) *gorm.DB {
+			return r.applyAccessibleFileScope(ctx, db, p, userID)
+		}).
+		Order("created_at DESC").
+		Offset(offset).Limit(limit).
+		Find(&rows).Error
 	if err != nil {
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// IsFileObjectAccessible reports whether the file is linked to an in-scope case or merged from the user's upload session.
+func (r *FileRepository) IsFileObjectAccessible(ctx context.Context, p *access.Principal, userID, fileID string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UploadSession{}).
+		Where("merged_file_id = ? AND user_id = ?", fileID, userID).
+		Count(&n).Error
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return true, nil
+	}
+	scopeExpr, scopeArgs, ok := buildDataScopeExpr(p, "c.institution_id", "c.department_id", "c.team_id")
+	if !ok {
+		return false, nil
+	}
+	err = r.db.WithContext(ctx).Model(&model.FileObject{}).
+		Joins("INNER JOIN file_references fr ON fr.file_object_id = file_objects.id").
+		Joins("INNER JOIN cases c ON fr.ref_type = 'case' AND fr.ref_id = c.id").
+		Where("file_objects.id = ?", fileID).
+		Where(scopeExpr, scopeArgs...).
+		Count(&n).Error
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *FileRepository) CreateFileReference(ctx context.Context, row *model.FileReference) error {

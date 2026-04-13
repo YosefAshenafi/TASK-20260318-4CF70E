@@ -213,7 +213,7 @@ func (r *RecruitmentRepository) CreateImportBatch(ctx context.Context, b *model.
 func (r *RecruitmentRepository) GetImportBatch(ctx context.Context, id string, pr *access.Principal) (*model.CandidateImportBatch, error) {
 	var b model.CandidateImportBatch
 	q := r.db.WithContext(ctx).Where("id = ?", id)
-	q = applyInstitutionScope(q, pr, "institution_id")
+	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
 	err := q.First(&b).Error
 	if err != nil {
 		return nil, err
@@ -224,7 +224,7 @@ func (r *RecruitmentRepository) GetImportBatch(ctx context.Context, id string, p
 func (r *RecruitmentRepository) UpdateImportBatchCommitted(ctx context.Context, id string, pr *access.Principal, validationJSON []byte, committedAt time.Time) error {
 	q := r.db.WithContext(ctx).Model(&model.CandidateImportBatch{}).
 		Where("id = ? AND status = ?", id, "pending")
-	q = applyInstitutionScope(q, pr, "institution_id")
+	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
 	res := q.Updates(map[string]interface{}{
 			"status":                 "committed",
 			"validation_report_json": validationJSON,

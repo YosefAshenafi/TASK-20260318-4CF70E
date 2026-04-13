@@ -434,7 +434,14 @@ type FileObjectDTO struct {
 	CreatedAt string  `json:"createdAt"`
 }
 
-func (s *FileService) GetFile(ctx context.Context, fileID string) (*FileObjectDTO, error) {
+func (s *FileService) GetFile(ctx context.Context, pr *access.Principal, userID, fileID string) (*FileObjectDTO, error) {
+	ok, err := s.files.IsFileObjectAccessible(ctx, pr, userID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrFileNotFound
+	}
 	fo, err := s.files.GetFileObject(ctx, fileID)
 	if repository.IsNotFound(err) {
 		return nil, ErrFileNotFound
@@ -455,8 +462,8 @@ func fileToDTO(fo *model.FileObject) *FileObjectDTO {
 	}
 }
 
-func (s *FileService) ListFiles(ctx context.Context, offset, limit int) ([]FileObjectDTO, int64, error) {
-	rows, total, err := s.files.ListFileObjects(ctx, offset, limit)
+func (s *FileService) ListFiles(ctx context.Context, pr *access.Principal, userID string, offset, limit int) ([]FileObjectDTO, int64, error) {
+	rows, total, err := s.files.ListAccessibleFileObjects(ctx, pr, userID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -472,7 +479,14 @@ func (s *FileService) ResolvedObjectPath(fo *model.FileObject) string {
 	return filepath.Join(s.root, filepath.FromSlash(fo.StoragePath))
 }
 
-func (s *FileService) GetFileObject(ctx context.Context, fileID string) (*model.FileObject, error) {
+func (s *FileService) GetFileObject(ctx context.Context, pr *access.Principal, userID, fileID string) (*model.FileObject, error) {
+	ok, err := s.files.IsFileObjectAccessible(ctx, pr, userID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrFileNotFound
+	}
 	fo, err := s.files.GetFileObject(ctx, fileID)
 	if repository.IsNotFound(err) {
 		return nil, ErrFileNotFound
@@ -490,8 +504,8 @@ func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Pr
 	if pr == nil || userID == "" {
 		return ErrForbiddenScope
 	}
-	_, err := s.files.GetFileObject(ctx, fileID)
-	if repository.IsNotFound(err) {
+	_, err := s.GetFileObject(ctx, pr, userID, fileID)
+	if errors.Is(err, ErrFileNotFound) {
 		return ErrFileNotFound
 	}
 	if err != nil {

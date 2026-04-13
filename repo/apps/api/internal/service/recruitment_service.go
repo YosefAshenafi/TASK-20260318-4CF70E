@@ -11,6 +11,7 @@ import (
 	"pharmaops/api/internal/access"
 	cryptopii "pharmaops/api/internal/crypto/pii"
 	"pharmaops/api/internal/model"
+	"pharmaops/api/internal/oplog"
 	"pharmaops/api/internal/repository"
 )
 
@@ -123,6 +124,7 @@ func (s *RecruitmentService) maybeAuditPIIRead(ctx context.Context, p *access.Pr
 		return
 	}
 	reqID := opts.RequestID
+	oplog.PIIAccess(reqID, opts.OperatorUserID, candidateID)
 	_ = s.audit.LogCandidatePIIRead(ctx, opts.OperatorUserID, candidateID, reqID, opts.RequestSource, fields)
 }
 
@@ -146,9 +148,15 @@ func (s *RecruitmentService) sealPII(plain string) ([]byte, error) {
 		return nil, nil
 	}
 	if s.piiCipher == nil || !s.piiCipher.Valid() {
+		oplog.EncryptionError("", "PII encryption key not configured")
 		return nil, ErrPIINotConfigured
 	}
-	return s.piiCipher.EncryptString(t)
+	ct, err := s.piiCipher.EncryptString(t)
+	if err != nil {
+		oplog.EncryptionError("", "PII encrypt failed: "+err.Error())
+		return nil, err
+	}
+	return ct, nil
 }
 
 func (s *RecruitmentService) encryptOptional(in *string) ([]byte, error) {

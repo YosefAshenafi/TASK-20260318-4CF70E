@@ -97,6 +97,8 @@ func (h *ComplianceHandler) GetQualification(c *gin.Context) {
 
 type createQualificationBody struct {
 	InstitutionID string         `json:"institutionId" binding:"required"`
+	DepartmentID  *string        `json:"departmentId"`
+	TeamID        *string        `json:"teamId"`
 	ClientID      string         `json:"clientId" binding:"required"`
 	DisplayName   string         `json:"displayName" binding:"required"`
 	ExpiresOn     *string        `json:"expiresOn"`
@@ -116,6 +118,8 @@ func (h *ComplianceHandler) CreateQualification(c *gin.Context) {
 	}
 	dto, err := h.svc.CreateQualification(c.Request.Context(), pr, service.CreateQualificationInput{
 		InstitutionID: body.InstitutionID,
+		DepartmentID:  body.DepartmentID,
+		TeamID:        body.TeamID,
 		ClientID:      body.ClientID,
 		DisplayName:   body.DisplayName,
 		ExpiresOn:     body.ExpiresOn,
@@ -224,7 +228,7 @@ func (h *ComplianceHandler) RunQualificationJob(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
-	n, err := h.svc.RunQualificationExpirationJob(c.Request.Context(), pr)
+	n, err := h.svc.RunQualificationExpirationJob(c.Request.Context(), pr, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "no institution scope")
 		return
@@ -287,6 +291,8 @@ func (h *ComplianceHandler) GetRestriction(c *gin.Context) {
 
 type createRestrictionBody struct {
 	InstitutionID string         `json:"institutionId" binding:"required"`
+	DepartmentID  *string        `json:"departmentId"`
+	TeamID        *string        `json:"teamId"`
 	ClientID      string         `json:"clientId" binding:"required"`
 	MedicationID  *string        `json:"medicationId"`
 	Rule          map[string]any `json:"rule" binding:"required"`
@@ -310,6 +316,8 @@ func (h *ComplianceHandler) CreateRestriction(c *gin.Context) {
 	}
 	dto, err := h.svc.CreateRestriction(c.Request.Context(), pr, service.CreateRestrictionInput{
 		InstitutionID: body.InstitutionID,
+		DepartmentID:  body.DepartmentID,
+		TeamID:        body.TeamID,
 		ClientID:      body.ClientID,
 		MedicationID:  body.MedicationID,
 		Rule:          body.Rule,

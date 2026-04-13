@@ -10,6 +10,7 @@ services:
       APP_ENV: development
       MYSQL_DSN: pharmaops:pharmaops@tcp(db:3306)/pharmaops?parseTime=true&loc=UTC&charset=utf8mb4
       FILE_STORAGE_ROOT: /var/lib/pharmaops/files
+      PII_AES_KEY_HEX: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     depends_on:
       db:
         condition: service_healthy

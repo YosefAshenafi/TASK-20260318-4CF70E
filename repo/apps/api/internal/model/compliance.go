@@ -7,6 +7,8 @@ import (
 type QualificationProfile struct {
 	ID             string     `gorm:"column:id;type:char(36);primaryKey"`
 	InstitutionID  string     `gorm:"column:institution_id;type:char(36);not null"`
+	DepartmentID   *string    `gorm:"column:department_id;type:char(36)"`
+	TeamID         *string    `gorm:"column:team_id;type:char(36)"`
 	ClientID       string     `gorm:"column:client_id;not null"`
 	DisplayName    string     `gorm:"column:display_name;not null"`
 	Status         string     `gorm:"column:status;not null;default:active"`
@@ -22,6 +24,8 @@ func (QualificationProfile) TableName() string { return "qualification_profiles"
 type PurchaseRestriction struct {
 	ID             string    `gorm:"column:id;type:char(36);primaryKey"`
 	InstitutionID  string    `gorm:"column:institution_id;type:char(36);not null"`
+	DepartmentID   *string   `gorm:"column:department_id;type:char(36)"`
+	TeamID         *string   `gorm:"column:team_id;type:char(36)"`
 	ClientID       string    `gorm:"column:client_id;not null"`
 	MedicationID   *string   `gorm:"column:medication_id"`
 	RuleJSON       []byte    `gorm:"column:rule_json;type:json;not null"`
@@ -36,6 +40,8 @@ type RestrictionViolationRecord struct {
 	ID             string    `gorm:"column:id;type:char(36);primaryKey"`
 	RestrictionID  *string   `gorm:"column:restriction_id;type:char(36)"`
 	InstitutionID  string    `gorm:"column:institution_id;type:char(36);not null"`
+	DepartmentID   *string   `gorm:"column:department_id;type:char(36)"`
+	TeamID         *string   `gorm:"column:team_id;type:char(36)"`
 	ClientID       string    `gorm:"column:client_id;not null"`
 	MedicationID   *string   `gorm:"column:medication_id"`
 	CaseID         *string   `gorm:"column:case_id;type:char(36)"`
@@ -48,6 +54,8 @@ func (RestrictionViolationRecord) TableName() string { return "restriction_viola
 type CompliancePurchaseRecord struct {
 	ID             string    `gorm:"column:id;type:char(36);primaryKey"`
 	InstitutionID  string    `gorm:"column:institution_id;type:char(36);not null"`
+	DepartmentID   *string   `gorm:"column:department_id;type:char(36)"`
+	TeamID         *string   `gorm:"column:team_id;type:char(36)"`
 	ClientID       string    `gorm:"column:client_id;not null"`
 	MedicationID   *string   `gorm:"column:medication_id"`
 	RecordedAt     time.Time `gorm:"column:recorded_at"`

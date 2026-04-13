@@ -10,18 +10,20 @@ import (
 
 	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/middleware"
+	"pharmaops/api/internal/oplog"
 	"pharmaops/api/internal/repository"
 	"pharmaops/api/internal/response"
 	"pharmaops/api/internal/service"
 )
 
 type AuthHandler struct {
-	auth  *service.AuthService
-	users *repository.UserRepository
+	auth   *service.AuthService
+	access *service.AccessService
+	users  *repository.UserRepository
 }
 
-func NewAuthHandler(auth *service.AuthService, users *repository.UserRepository) *AuthHandler {
-	return &AuthHandler{auth: auth, users: users}
+func NewAuthHandler(auth *service.AuthService, access *service.AccessService, users *repository.UserRepository) *AuthHandler {
+	return &AuthHandler{auth: auth, access: access, users: users}
 }
 
 type loginBody struct {
@@ -60,23 +62,38 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if ua != "" {
 		uaPtr = &ua
 	}
-	token, exp, err := h.auth.Login(c.Request.Context(), body.Username, body.Password, ipPtr, uaPtr)
+	rid := c.GetString("requestId")
+	ls, err := h.auth.Login(c.Request.Context(), body.Username, body.Password, ipPtr, uaPtr)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
+			oplog.AuthFailure(rid, ip, body.Username, "invalid_credentials")
 			response.Error(c, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "invalid username or password")
 		case errors.Is(err, service.ErrPasswordTooShort):
+			oplog.AuthFailure(rid, ip, body.Username, "password_too_short")
 			response.Error(c, http.StatusBadRequest, "AUTH_PASSWORD_TOO_SHORT", "password must be at least 8 characters")
 		case errors.Is(err, service.ErrAccountDisabled):
+			oplog.AuthFailure(rid, ip, body.Username, "account_disabled")
 			response.Error(c, http.StatusForbidden, "AUTH_ACCOUNT_DISABLED", "account is disabled")
 		default:
 			response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "login failed")
 		}
 		return
 	}
+	oplog.AuthSuccess(rid, ls.UserID, ip)
+	pr, err := h.access.LoadPrincipal(c.Request.Context(), ls.UserID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load user")
+		return
+	}
 	response.OK(c, gin.H{
-		"token":     token,
-		"expiresAt": exp.UTC().Format("2006-01-02T15:04:05Z"),
+		"token":     ls.Token,
+		"expiresAt": ls.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
+		"user": gin.H{
+			"id":       ls.UserID,
+			"username": ls.Username,
+			"roles":    pr.RoleSlugs,
+		},
 	})
 }
 
