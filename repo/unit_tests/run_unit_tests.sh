@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[UNIT] Running unit tests..."
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo "[UNIT] Running Go unit tests (apps/api)..."
 
-# Placeholder until unit test suites are implemented.
-# Replace this with concrete commands (for example: go test ./..., vitest run).
-echo "[UNIT] No concrete unit test files yet. Placeholder passed."
+(cd "$ROOT/apps/api" && go test ./...)

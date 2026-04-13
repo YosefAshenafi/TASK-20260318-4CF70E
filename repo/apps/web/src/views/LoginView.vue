@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 
 import { useAuthStore } from '@/stores/auth'
 
@@ -8,16 +9,26 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-const username = ref('demo')
+const username = ref('admin')
 const password = ref('')
+const submitting = ref(false)
 
-function submit() {
-  if (!username.value.trim()) {
+async function submit() {
+  if (!username.value.trim() || !password.value) {
+    ElMessage.warning('Enter username and password.')
     return
   }
-  auth.login(username.value.trim())
-  const redirect = (route.query.redirect as string) || '/dashboard'
-  router.replace(redirect)
+  submitting.value = true
+  try {
+    await auth.login(username.value.trim(), password.value)
+    const redirect = (route.query.redirect as string) || '/dashboard'
+    router.replace(redirect)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Sign in failed'
+    ElMessage.error(msg)
+  } finally {
+    submitting.value = false
+  }
 }
 </script>
 
@@ -53,12 +64,16 @@ function submit() {
               placeholder="Enter password"
             />
           </el-form-item>
-          <el-button type="primary" class="login-btn" native-type="submit" round>Continue</el-button>
+          <el-button
+            type="primary"
+            class="login-btn"
+            native-type="submit"
+            round
+            :loading="submitting"
+          >
+            Continue
+          </el-button>
         </el-form>
-        <p class="hint">
-          Scaffold mode: password is not validated yet. Server-side session and bcrypt apply with the
-          API.
-        </p>
       </el-card>
     </div>
   </div>
@@ -186,14 +201,5 @@ function submit() {
   margin-top: 0.25rem;
   height: 44px;
   font-weight: 600;
-}
-
-.hint {
-  margin: 1.25rem 0 0;
-  padding-top: 1rem;
-  border-top: 1px solid var(--el-border-color-lighter);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  color: var(--el-text-color-secondary);
 }
 </style>

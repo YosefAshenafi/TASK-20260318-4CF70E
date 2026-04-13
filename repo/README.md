@@ -9,7 +9,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- **Web UI:** http://127.0.0.1:8080/
+- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API; dev seed `admin` / `password` after migrations)
 - **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
 
 Stop:

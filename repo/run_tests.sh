@@ -7,6 +7,10 @@ docker compose up -d --build
 docker compose ps
 
 echo
+echo "DB: apply migrations"
+bash scripts/db_migrate.sh
+
+echo
 echo "Smoke: web UI (http://127.0.0.1:8080/)"
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:8080/" >/dev/null 2>&1; then
@@ -16,6 +20,17 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:8080/" >/dev/null
+
+echo
+echo "Smoke: API health (via nginx → api)"
+for _ in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1; then
+    echo "API /api/v1/health responded OK."
+    break
+  fi
+  sleep 1
+done
+curl -fsS "http://127.0.0.1:8080/api/v1/health" >/dev/null
 
 echo
 echo "1/3 Unit tests"

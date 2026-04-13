@@ -32,8 +32,8 @@ function onSelect(index: string) {
   router.push(index)
 }
 
-function signOut() {
-  auth.logout()
+async function signOut() {
+  await auth.logout()
   router.push({ name: 'login' })
 }
 </script>
