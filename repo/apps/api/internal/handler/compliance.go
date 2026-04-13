@@ -100,6 +100,8 @@ type createQualificationBody struct {
 	DepartmentID  *string        `json:"departmentId"`
 	TeamID        *string        `json:"teamId"`
 	ClientID      string         `json:"clientId" binding:"required"`
+	PartyType     string         `json:"partyType"`
+	SupplierID    *string        `json:"supplierId"`
 	DisplayName   string         `json:"displayName" binding:"required"`
 	ExpiresOn     *string        `json:"expiresOn"`
 	Metadata      map[string]any `json:"metadata"`
@@ -116,11 +118,17 @@ func (h *ComplianceHandler) CreateQualification(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
 		return
 	}
+	partyType := body.PartyType
+	if partyType == "" {
+		partyType = "client"
+	}
 	dto, err := h.svc.CreateQualification(c.Request.Context(), pr, service.CreateQualificationInput{
 		InstitutionID: body.InstitutionID,
 		DepartmentID:  body.DepartmentID,
 		TeamID:        body.TeamID,
 		ClientID:      body.ClientID,
+		PartyType:     partyType,
+		SupplierID:    body.SupplierID,
 		DisplayName:   body.DisplayName,
 		ExpiresOn:     body.ExpiresOn,
 		Metadata:      body.Metadata,

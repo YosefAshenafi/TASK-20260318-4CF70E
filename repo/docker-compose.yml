@@ -30,6 +30,8 @@ services:
     image: mysql:8.4
     container_name: pharmaops-db
     restart: unless-stopped
+    # Allow non-SUPER users to create triggers when binary logging is on (migration 000020).
+    command: ["mysqld", "--log-bin-trust-function-creators=1"]
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: pharmaops

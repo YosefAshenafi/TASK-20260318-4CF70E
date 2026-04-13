@@ -12,6 +12,8 @@ type QualRow = {
   id: string
   institutionId: string
   clientId: string
+  partyType: string
+  supplierId?: string
   displayName: string
   status: string
   expiresOn?: string
@@ -44,6 +46,8 @@ const dialogSaving = ref(false)
 const formClient = ref('')
 const formName = ref('')
 const formExpires = ref('')
+const formPartyType = ref<'client' | 'supplier'>('client')
+const formSupplierId = ref('')
 
 async function loadExpiring() {
   expiringLoading.value = true
@@ -85,12 +89,18 @@ function openCreate() {
   formClient.value = ''
   formName.value = ''
   formExpires.value = ''
+  formPartyType.value = 'client'
+  formSupplierId.value = ''
   dialogVisible.value = true
 }
 
 async function submitCreate() {
   if (!formClient.value.trim() || !formName.value.trim()) {
     ElMessage.warning('Client ID and display name are required.')
+    return
+  }
+  if (formPartyType.value === 'supplier' && !formSupplierId.value.trim()) {
+    ElMessage.warning('Supplier ID is required when party type is supplier.')
     return
   }
   dialogSaving.value = true
@@ -102,12 +112,17 @@ async function submitCreate() {
       ElMessage.error(err instanceof Error ? err.message : 'No data scope')
       return
     }
-    await apiPost<QualRow>('/api/v1/compliance/qualifications', {
+    const payload: Record<string, unknown> = {
       institutionId: scope.institutionId,
       clientId: formClient.value.trim(),
+      partyType: formPartyType.value,
       displayName: formName.value.trim(),
       expiresOn: formExpires.value || undefined,
-    })
+    }
+    if (formPartyType.value === 'supplier') {
+      payload.supplierId = formSupplierId.value.trim()
+    }
+    await apiPost<QualRow>('/api/v1/compliance/qualifications', payload)
     ElMessage.success('Qualification created.')
     dialogVisible.value = false
     await load()
@@ -217,10 +232,12 @@ onMounted(async () => {
 
     <el-card class="rec-card" shadow="never">
       <el-table v-loading="loading" :data="rows" stripe empty-text="No qualifications to show" :row-class-name="tableRowClassName">
-        <el-table-column prop="displayName" label="Client / name" min-width="220">
+        <el-table-column prop="displayName" label="Client / Supplier" min-width="220">
           <template #default="{ row }">
             <div class="qual-name">{{ row.displayName }}</div>
-            <div class="qual-sub">{{ row.clientId }}</div>
+            <div class="qual-sub">
+              {{ row.partyType === 'supplier' ? `Supplier: ${row.supplierId || '-'}` : row.clientId }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="Status" width="110">
@@ -295,6 +312,15 @@ onMounted(async () => {
 
     <el-dialog v-model="dialogVisible" title="New qualification" width="440px" destroy-on-close>
       <el-form label-position="top">
+        <el-form-item label="Party type">
+          <el-radio-group v-model="formPartyType">
+            <el-radio value="client">Client</el-radio>
+            <el-radio value="supplier">Supplier</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="formPartyType === 'supplier'" label="Supplier ID" required>
+          <el-input v-model="formSupplierId" placeholder="e.g. sup-001" />
+        </el-form-item>
         <el-form-item label="Client ID" required>
           <el-input v-model="formClient" placeholder="e.g. client-demo-1" />
         </el-form-item>

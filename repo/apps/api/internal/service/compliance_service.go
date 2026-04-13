@@ -20,18 +20,20 @@ type restrictionRule struct {
 
 // QualificationDTO for API responses.
 type QualificationDTO struct {
-	ID             string         `json:"id"`
-	InstitutionID  string         `json:"institutionId"`
-	DepartmentID   *string        `json:"departmentId,omitempty"`
-	TeamID         *string        `json:"teamId,omitempty"`
-	ClientID       string         `json:"clientId"`
-	DisplayName    string         `json:"displayName"`
-	Status         string         `json:"status"`
-	ExpiresOn      *string        `json:"expiresOn,omitempty"`
-	DeactivatedAt  *string        `json:"deactivatedAt,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
-	CreatedAt      string         `json:"createdAt"`
-	UpdatedAt      string         `json:"updatedAt"`
+	ID            string         `json:"id"`
+	InstitutionID string         `json:"institutionId"`
+	DepartmentID  *string        `json:"departmentId,omitempty"`
+	TeamID        *string        `json:"teamId,omitempty"`
+	ClientID      string         `json:"clientId"`
+	PartyType     string         `json:"partyType"`
+	SupplierID    *string        `json:"supplierId,omitempty"`
+	DisplayName   string         `json:"displayName"`
+	Status        string         `json:"status"`
+	ExpiresOn     *string        `json:"expiresOn,omitempty"`
+	DeactivatedAt *string        `json:"deactivatedAt,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	CreatedAt     string         `json:"createdAt"`
+	UpdatedAt     string         `json:"updatedAt"`
 }
 
 // RestrictionDTO for API responses.
@@ -147,6 +149,8 @@ func toQualificationDTO(q *model.QualificationProfile) QualificationDTO {
 		DepartmentID:  q.DepartmentID,
 		TeamID:        q.TeamID,
 		ClientID:      q.ClientID,
+		PartyType:     q.PartyType,
+		SupplierID:    q.SupplierID,
 		DisplayName:   q.DisplayName,
 		Status:        q.Status,
 		Metadata:      parseMetadata(q.MetadataJSON),
@@ -226,6 +230,8 @@ type CreateQualificationInput struct {
 	DepartmentID  *string
 	TeamID        *string
 	ClientID      string
+	PartyType     string
+	SupplierID    *string
 	DisplayName   string
 	ExpiresOn     *string
 	Metadata      map[string]any
@@ -266,6 +272,8 @@ func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.P
 		DepartmentID:  dept,
 		TeamID:        team,
 		ClientID:      in.ClientID,
+		PartyType:     in.PartyType,
+		SupplierID:    in.SupplierID,
 		DisplayName:   in.DisplayName,
 		Status:        "active",
 		ExpiresOn:     exp,
@@ -695,15 +703,15 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 					"source":        "restriction_rule",
 				})
 				_ = s.repo.InsertViolation(ctx, &model.RestrictionViolationRecord{
-					ID:             uuid.NewString(),
-					RestrictionID:  &row.ID,
-					InstitutionID:  in.InstitutionID,
-					DepartmentID:   row.DepartmentID,
-					TeamID:         row.TeamID,
-					ClientID:       in.ClientID,
-					MedicationID:   medPtr,
-					DetailsJSON:    details,
-					CreatedAt:      time.Now().UTC(),
+					ID:            uuid.NewString(),
+					RestrictionID: &row.ID,
+					InstitutionID: in.InstitutionID,
+					DepartmentID:  row.DepartmentID,
+					TeamID:        row.TeamID,
+					ClientID:      in.ClientID,
+					MedicationID:  medPtr,
+					DetailsJSON:   details,
+					CreatedAt:     time.Now().UTC(),
 				})
 				return &CheckPurchaseResult{Allowed: false, Reasons: []string{"prescription attachment required by active restriction rule"}}, nil
 			}
@@ -726,15 +734,15 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 				msg := "purchase already made within last " + strconv.Itoa(rule.FrequencyDays) + " days"
 				details, _ := json.Marshal(map[string]any{"reason": "FREQUENCY", "restrictionId": row.ID})
 				_ = s.repo.InsertViolation(ctx, &model.RestrictionViolationRecord{
-					ID:             uuid.NewString(),
-					RestrictionID:  &row.ID,
-					InstitutionID:  in.InstitutionID,
-					DepartmentID:   row.DepartmentID,
-					TeamID:         row.TeamID,
-					ClientID:       in.ClientID,
-					MedicationID:   medPtr,
-					DetailsJSON:    details,
-					CreatedAt:      time.Now().UTC(),
+					ID:            uuid.NewString(),
+					RestrictionID: &row.ID,
+					InstitutionID: in.InstitutionID,
+					DepartmentID:  row.DepartmentID,
+					TeamID:        row.TeamID,
+					ClientID:      in.ClientID,
+					MedicationID:  medPtr,
+					DetailsJSON:   details,
+					CreatedAt:     time.Now().UTC(),
 				})
 				return &CheckPurchaseResult{Allowed: false, Reasons: []string{msg}}, nil
 			}
@@ -742,13 +750,13 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 	}
 
 	rec := &model.CompliancePurchaseRecord{
-		ID:             uuid.NewString(),
-		InstitutionID:  in.InstitutionID,
-		DepartmentID:   dept,
-		TeamID:         team,
-		ClientID:       in.ClientID,
-		MedicationID:   medPtr,
-		RecordedAt:     in.PurchaseAt.UTC(),
+		ID:            uuid.NewString(),
+		InstitutionID: in.InstitutionID,
+		DepartmentID:  dept,
+		TeamID:        team,
+		ClientID:      in.ClientID,
+		MedicationID:  medPtr,
+		RecordedAt:    in.PurchaseAt.UTC(),
 	}
 	if err := s.repo.InsertPurchaseRecord(ctx, rec); err != nil {
 		return nil, err

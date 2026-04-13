@@ -3,33 +3,30 @@
 ## 1. Verdict
 
 - **Overall conclusion: Partial Pass**
-- The repository is a substantial full-stack delivery with broad prompt alignment, but there are **material security and requirement-fit risks** (notably default privileged seed credentials and weak resume parsing approach for binary formats) that prevent a full pass.
+- Core full-stack capabilities are implemented and traceable, but there are material gaps against the prompt/security bar:
+  - **High:** purchase restriction check accepts any existing file ID (no scope/ownership authorization on prescription attachment).
+  - **High:** compliance frequency rule is configurable/optional, while prompt requires a strict once-per-7-days control.
+  - **Medium:** audit export omits request source and before/after field diffs, weakening non-repudiation/export intent.
 
 ## 2. Scope and Static Verification Boundary
 
 - **Reviewed**
-  - Product/contract docs: `docs/design.md`, `docs/api-spec.md`, `repo/README.md`
-  - Backend bootstrap, routing, authN/authZ, service/repository layers, migrations, and static tests
-  - Frontend routing/layout and core views for recruitment/compliance/cases/files/audit
+  - docs/contracts: `docs/design.md`, `docs/api-spec.md`, `repo/README.md`, `repo/.env.example`
+  - backend: bootstrapping, routing, middleware, handlers, services, repositories, models, migrations
+  - frontend: route/layout and major module views for recruitment/compliance/cases/files/audit/RBAC
+  - tests: Go test files under `repo/apps/api/internal`, Vitest files under `repo/apps/web/src`
 - **Not reviewed**
-  - Runtime behavior, deployment runtime stability, real browser interactions, real DB state evolution under load
-  - Non-primary generated artifacts (`dist`, `node_modules`) as implementation evidence
+  - runtime behavior under real deployment, browser interaction, network timing, long-running scheduler behavior in production
 - **Intentionally not executed**
-  - Project startup, Docker, tests, external services (per audit constraints)
+  - project startup, Docker, tests, external services (per static-only boundary)
 - **Manual verification required**
-  - Real-world resume parsing quality for PDF/DOCX inputs
-  - Scheduler behavior over time (expiration/deactivation cadence in deployed environment)
-  - UX polish and interaction consistency under actual browser usage
+  - end-user visual polish/accessibility/responsiveness
+  - runtime scheduler cadence and ops behavior over long uptime
 
 ## 3. Repository / Requirement Mapping Summary
 
-- **Prompt core goal mapped:** offline intranet pharma compliance + recruitment platform with RBAC/data scope, secure auth/session, PII controls, file uploads, case ledger, and append-only audit.
-- **Mapped implementation areas:**
-  - API route and middleware enforcement in `apps/api/internal/httpserver/server.go`
-  - Domain logic in recruitment/compliance/case/file/audit services and repositories
-  - DB contracts in `infra/db/migrations`
-  - UI route/modules and operator flows in `apps/web/src/views/**`
-  - Static tests in `apps/api/internal/**/*test.go`
+- **Prompt core goals mapped:** offline intranet pharma compliance + recruitment platform; RBAC + institution/department/team scope; secure auth/session; PII encryption/masking; resumable file upload + dedup; case ledger; append-only audit.
+- **Primary implementation areas mapped:** API route/middleware matrix in `repo/apps/api/internal/httpserver/server.go`; domain logic in service/repository layers; schema/contracts in `repo/infra/db/migrations`; UI modules in `repo/apps/web/src/views`.
 
 ## 4. Section-by-section Review
 
@@ -37,189 +34,179 @@
 
 #### 1.1 Documentation and static verifiability
 - **Conclusion: Pass**
-- **Rationale:** README provides setup/env/test entry points, and those are statically consistent with project layout and route registration.
-- **Evidence:** `repo/README.md:31`, `repo/README.md:58`, `repo/apps/api/cmd/api/main.go:12`, `repo/apps/api/internal/httpserver/server.go:83`, `repo/apps/web/src/router/index.ts:6`
+- **Rationale:** repo has clear setup/env/test docs and statically consistent entrypoints/routes.
+- **Evidence:** `repo/README.md:39`, `repo/README.md:54`, `repo/apps/api/cmd/api/main.go:12`, `repo/apps/api/internal/httpserver/server.go:79`, `repo/apps/web/src/router/index.ts:6`
 
-#### 1.2 Material deviation from Prompt
+#### 1.2 Material deviation from prompt
 - **Conclusion: Partial Pass**
-- **Rationale:** Core domains are implemented, but resume ingestion for binary files is likely below prompt intent for structured extraction quality.
-- **Evidence:** Prompt-required resume import and structured extraction target in `docs/design.md:184`; current parser reads raw file bytes and regex-matches text without format-specific parsers in `repo/apps/api/internal/service/recruitment_extended.go:143`, `repo/apps/api/internal/service/recruitment_extended.go:208`, `repo/apps/api/internal/service/recruitment_extended.go:105`
-- **Manual verification note:** Validate extraction precision/recall on realistic PDF/DOCX resumes.
+- **Rationale:** platform is centered on the prompt domains, but compliance control semantics diverge on 7-day purchase-limit strictness.
+- **Evidence:** prompt-aligned requirement in `docs/design.md:463`; implementation uses arbitrary `frequencyDays` and enforces only when `> 0` in `repo/apps/api/internal/service/compliance_service.go:16`, `repo/apps/api/internal/service/compliance_service.go:726`
 
 ### 2. Delivery Completeness
 
-#### 2.1 Core prompt requirement coverage
+#### 2.1 Coverage of explicit core requirements
 - **Conclusion: Partial Pass**
-- **Rationale:** Most explicit requirements are implemented (RBAC/scope, case numbering/duplicate guard, compliance checks, file chunk upload/dedup, audit append-only), but resume extraction depth for binary formats appears weak.
-- **Evidence:** RBAC+scope middleware and permissions `repo/apps/api/internal/httpserver/server.go:89`; case numbering/duplicate guard `repo/apps/api/internal/service/case_service.go:127`; compliance purchase checks `repo/apps/api/internal/service/compliance_service.go:656`; upload chunk+dedup `repo/apps/api/internal/service/file_service.go:130`; audit append-only DB guard `repo/infra/db/migrations/000020_audit_immutability_guards.up.sql:4`; resume parser concern `repo/apps/api/internal/service/recruitment_extended.go:143`
+- **Rationale:** most core requirements are implemented (RBAC/scope, auth/session, recruitment merge/match/recommendations, compliance qualification/restriction checks, case numbering/duplicate guard, file chunk/dedup, audit append-only), but key compliance restriction semantics and attachment authorization are materially weak.
+- **Evidence:** RBAC/scope routes `repo/apps/api/internal/httpserver/server.go:85`; auth/session `repo/apps/api/internal/service/auth_service.go:49`; case controls `repo/apps/api/internal/service/case_service.go:123`, `repo/apps/api/internal/service/case_service.go:163`; upload/dedup `repo/apps/api/internal/service/file_service.go:130`, `repo/apps/api/internal/service/file_service.go:291`; audit DB append-only trigger `repo/infra/db/migrations/000020_audit_immutability_guards.up.sql:4`
 
-#### 2.2 0-to-1 deliverable vs demo fragment
+#### 2.2 0→1 deliverable completeness
 - **Conclusion: Pass**
-- **Rationale:** Complete multi-module backend/frontend structure with migrations, handlers/services/repos, and documented commands exists; not a toy single-file sample.
-- **Evidence:** `repo/apps/api/internal/httpserver/server.go:83`, `repo/apps/web/src/router/index.ts:14`, `repo/infra/db/migrations/000001_initial_schema.up.sql:10`, `repo/README.md:14`
+- **Rationale:** complete backend/frontend/migrations/scripts/docs structure; not a fragment/demo-only snippet.
+- **Evidence:** `repo/apps/api/internal/httpserver/server.go:90`, `repo/apps/web/src/views/recruitment/CandidatesView.vue:401`, `repo/infra/db/migrations/000001_initial_schema.up.sql:10`, `repo/README.md:22`
 
 ### 3. Engineering and Architecture Quality
 
-#### 3.1 Structure and decomposition
+#### 3.1 Structure and module decomposition
 - **Conclusion: Pass**
-- **Rationale:** Router/handler/service/repository layering is clear and consistent; domain modules are separated.
-- **Evidence:** Layered composition in `repo/apps/api/internal/httpserver/server.go:40`, service modules under `repo/apps/api/internal/service/*.go`, repositories under `repo/apps/api/internal/repository/*.go`
+- **Rationale:** clean layered composition (router/handler/service/repository), modular domains, clear route ownership.
+- **Evidence:** `repo/apps/api/internal/httpserver/server.go:40`, `repo/apps/api/internal/service/recruitment_service.go:36`, `repo/apps/api/internal/repository/recruitment_repo.go:46`
 
 #### 3.2 Maintainability/extensibility
 - **Conclusion: Partial Pass**
-- **Rationale:** Architecture is generally maintainable, but secure deployment hygiene is weakened by unconditional dev seed migrations.
-- **Evidence:** unconditional seeded admin credentials `repo/infra/db/migrations/000002_dev_seed_user.up.sql:6`; unconditional full-access role binding `repo/infra/db/migrations/000003_dev_rbac_scope_seed.up.sql:67`
+- **Rationale:** generally extensible, but compliance rule model is overly permissive relative to required fixed policy.
+- **Evidence:** flexible rule JSON and optional checks `repo/apps/api/internal/service/compliance_service.go:16`, `repo/apps/api/internal/service/compliance_service.go:533`, `repo/apps/api/internal/service/compliance_service.go:726`
 
 ### 4. Engineering Details and Professionalism
 
 #### 4.1 Error handling, logging, validation, API design
 - **Conclusion: Partial Pass**
-- **Rationale:** Response envelopes, typed errors, and validations are broadly present; however security posture is weakened by default privileged seed data and optional health protection.
-- **Evidence:** envelope shape `repo/apps/api/internal/response/envelope.go:11`; validation examples `repo/apps/api/internal/handler/case.go:101`; logging categories `repo/apps/api/internal/oplog/oplog.go:36`; optional health token only when configured `repo/apps/api/internal/handler/health.go:22`, `repo/.env.example:33`
+- **Rationale:** consistent error envelopes and structured logs are present, but security-critical validation/authorization gaps remain in compliance check flow.
+- **Evidence:** envelope/error handling `repo/apps/api/internal/response/envelope.go:11`; structured ops logs `repo/apps/api/internal/oplog/oplog.go:12`; insecure Rx attachment existence-only check `repo/apps/api/internal/service/compliance_service.go:693`, `repo/apps/api/internal/repository/file_repo.go:229`
 
-#### 4.2 Product-level realism vs demo-only
+#### 4.2 Product/service realism
 - **Conclusion: Pass**
-- **Rationale:** Multi-role modules, persistence layer, and cross-domain workflows indicate product-style implementation rather than a teaching stub.
-- **Evidence:** full route surface `repo/apps/api/internal/httpserver/server.go:94`; recruitment/compliance/cases/files/audit UI modules in `repo/apps/web/src/views/**`
+- **Rationale:** implementation resembles a real product service (multi-domain CRUD/workflows, role/scope gates, persistence, exports, UI modules).
+- **Evidence:** `repo/apps/api/internal/httpserver/server.go:112`, `repo/apps/api/internal/httpserver/server.go:128`, `repo/apps/web/src/views/cases/CasesView.vue:448`
 
 ### 5. Prompt Understanding and Requirement Fit
 
-#### 5.1 Business goal/scenario/constraints fit
+#### 5.1 Business/constraint fit
 - **Conclusion: Partial Pass**
-- **Rationale:** Strong coverage of prompt semantics overall, but two key fit risks remain: (1) binary resume extraction quality, and (2) insecure default privileged account posture conflicting with production-grade compliance expectations.
-- **Evidence:** recruitment parsing approach `repo/apps/api/internal/service/recruitment_extended.go:143`; seeded `admin/password` `repo/README.md:9`, `repo/infra/db/migrations/000002_dev_seed_user.up.sql:9`; seeded `system.full_access` role binding `repo/infra/db/migrations/000003_dev_rbac_scope_seed.up.sql:55`
+- **Rationale:** broad fit is strong, but two requirement-semantic mismatches remain:
+  - 7-day purchase frequency is not enforced as a fixed policy.
+  - prescription attachment authorization is not scope-aware.
+- **Evidence:** fixed 7-day requirement text `docs/design.md:464`; dynamic optional enforcement `repo/apps/api/internal/service/compliance_service.go:726`; attachment check without scope/owner authorization `repo/apps/api/internal/service/compliance_service.go:694`, `repo/apps/api/internal/repository/file_repo.go:229`
 
-### 6. Aesthetics (frontend)
+### 6. Aesthetics (frontend/full-stack)
 
-#### 6.1 Visual and interaction quality
+#### 6.1 Visual/interaction quality
 - **Conclusion: Cannot Confirm Statistically**
-- **Rationale:** Static code shows coherent Element Plus usage, spacing/theme, and interaction feedback patterns, but final rendering quality requires manual UI execution.
-- **Evidence:** layout/theme styling `repo/apps/web/src/layouts/AppLayout.vue:83`; confirmations/toasts in high-impact flows e.g. `repo/apps/web/src/views/cases/CasesView.vue:285`, `repo/apps/web/src/views/recruitment/CandidatesView.vue:257`
-- **Manual verification note:** Run UI and inspect cross-page visual consistency, hover/click states, and responsive behavior.
+- **Rationale:** static code shows coherent layout/theme and interaction feedback patterns, but final visual quality requires live rendering.
+- **Evidence:** layout/theme `repo/apps/web/src/layouts/AppLayout.vue:83`; confirmation+toast patterns in high-impact flows `repo/apps/web/src/views/recruitment/CandidatesView.vue:255`, `repo/apps/web/src/views/cases/CasesView.vue:351`, `repo/apps/web/src/views/compliance/QualificationsView.vue:223`
+- **Manual verification note:** verify cross-page visual consistency/interaction states in browser.
 
 ## 5. Issues / Suggestions (Severity-Rated)
 
-### Blocker / High
+### High
 
-1) **Severity: High**  
-**Title:** Default privileged admin account seeded by migrations  
+1) **Severity:** High  
+**Title:** Prescription attachment authorization bypass in purchase checks  
 **Conclusion:** Fail  
-**Evidence:** `repo/infra/db/migrations/000002_dev_seed_user.up.sql:6`, `repo/infra/db/migrations/000003_dev_rbac_scope_seed.up.sql:67`, `repo/README.md:9`  
-**Impact:** Any deployment running migrations as-is receives a known-credential admin mapped to full-access role/scope, creating a critical takeover risk.  
-**Minimum actionable fix:** Gate dev seed migrations by environment, or move them to explicit optional seed scripts not run in production paths; enforce first-login password rotation if seeds are retained for local-only use.
+**Evidence:** `repo/apps/api/internal/service/compliance_service.go:693`, `repo/apps/api/internal/repository/file_repo.go:229`  
+**Impact:** purchase approval can be satisfied using any existing file ID, without verifying the file is accessible to the caller’s data scope/ownership; weakens controlled-medication guardrails.  
+**Minimum actionable fix:** replace existence-only check with scope-aware authorization (e.g., `IsFileObjectAccessible`-style check using principal + actor), and reject attachments outside caller scope.
 
-2) **Severity: High**  
-**Title:** Resume extraction for PDF/DOCX is format-naive and likely unreliable  
-**Conclusion:** Partial Fail  
-**Evidence:** raw byte-to-string regex parsing in `repo/apps/api/internal/service/recruitment_extended.go:143`, file read in `repo/apps/api/internal/service/recruitment_extended.go:208`, MIME whitelist includes binary docs in `repo/apps/api/internal/service/file_service.go:32`  
-**Impact:** Bulk resume import can produce poor/incorrect structured data for common resume formats, undermining core recruitment workflow quality and downstream matching/merge behavior.  
-**Minimum actionable fix:** Add format-aware extractors for PDF/DOCX (or clearly constrain accepted import formats), and return deterministic validation errors for unsupported parse fidelity.
+2) **Severity:** High  
+**Title:** Prompt-required 7-day purchase limit is not strictly enforced  
+**Conclusion:** Fail  
+**Evidence:** `docs/design.md:464`, `repo/apps/api/internal/service/compliance_service.go:16`, `repo/apps/api/internal/service/compliance_service.go:726`, `repo/apps/web/src/views/compliance/RestrictionsView.vue:454`  
+**Impact:** system can persist and enforce non-7-day (or zero-day) frequency values, violating explicit business rule semantics for controlled/prescription medications.  
+**Minimum actionable fix:** enforce fixed `frequencyDays = 7` for the relevant medication-restriction class in backend validation; disallow disabling/overriding this guard where prompt requires mandatory policy.
 
 ### Medium
 
-3) **Severity: Medium**  
-**Title:** Health endpoint hardening is optional and defaults open  
+3) **Severity:** Medium  
+**Title:** Audit export omits field diffs and request source  
 **Conclusion:** Partial Fail  
-**Evidence:** token check only when env var set `repo/apps/api/internal/handler/health.go:22`; default empty token `repo/.env.example:33`  
-**Impact:** Infrastructure/DB health metadata can be queried without auth in default config, increasing information disclosure surface.  
-**Minimum actionable fix:** Require token (or auth) for health by default; provide explicit opt-out for local dev only.
+**Evidence:** export columns only include id/module/op/operator/target/time in `repo/apps/api/internal/repository/audit_repo.go:132`; diff/source fields exist in stored schema `repo/apps/api/internal/model/audit.go:13`, `repo/apps/api/internal/model/audit.go:17`  
+**Impact:** exported audit artifacts do not carry key non-repudiation details required for compliance review (before/after changes, request source).  
+**Minimum actionable fix:** include `request_source`, `request_id`, and serialized `before_json`/`after_json` in export output (CSV or richer format).
 
-4) **Severity: Medium**  
-**Title:** Critical auth/session lifecycle lacks substantive automated coverage  
+4) **Severity:** Medium  
+**Title:** Static test coverage misses critical purchase-attachment authorization abuse path  
 **Conclusion:** Partial Fail  
-**Evidence:** no functional auth service/session tests found; only constructor reference `repo/apps/api/internal/service/service_constructors_test.go:14`; middleware bearer parsing only `repo/apps/api/internal/middleware/auth_test.go:5`  
-**Impact:** Severe defects in login hash validation, TTL expiry, or logout invalidation could pass current test suite undetected.  
-**Minimum actionable fix:** Add integration tests for login success/failure, session expiry behavior, logout revocation, and token reuse rejection.
-
-5) **Severity: Medium**  
-**Title:** Frontend has no automated test suite  
-**Conclusion:** Partial Fail  
-**Evidence:** no test files under web app `repo/apps/web` (static scan), while `package.json` has no `test` script `repo/apps/web/package.json:6`  
-**Impact:** UI regressions in critical operator flows (confirmations, role-aware visibility, import UX) are not automatically detected.  
-**Minimum actionable fix:** Add at least smoke-level component/E2E coverage for login, RBAC menu visibility, candidate import, compliance checks, and case transitions.
+**Evidence:** existing compliance tests validate existence/frequency behavior but not scope/ownership authorization on prescription attachment IDs `repo/apps/api/internal/service/compliance_purchase_enforcement_integration_test.go:16`, `repo/apps/api/internal/service/compliance_check_purchase_test.go:42`  
+**Impact:** severe data-scope bypass risk could remain undetected while tests pass.  
+**Minimum actionable fix:** add negative tests proving purchase is denied when attachment exists but is outside caller-accessible scope/ownership.
 
 ## 6. Security Review Summary
 
-- **Authentication entry points: Partial Pass**  
-  Evidence: login/logout/me routes in `repo/apps/api/internal/httpserver/server.go:86`; bcrypt compare and token hashing in `repo/apps/api/internal/service/auth_service.go:64`, `repo/apps/api/internal/service/auth_service.go:76`.  
-  Note: Seeded default admin credentials materially weaken deployment security (`000002`, `000003` migrations).
+- **Authentication entry points — Pass**  
+  Evidence: login/logout/me endpoints and middleware chain `repo/apps/api/internal/httpserver/server.go:82`, `repo/apps/api/internal/middleware/auth.go:27`; bcrypt + opaque token hashing in `repo/apps/api/internal/service/auth_service.go:64`, `repo/apps/api/internal/service/auth_service.go:76`.
 
-- **Route-level authorization: Pass**  
-  Evidence: permission middleware applied per protected route in `repo/apps/api/internal/httpserver/server.go:94`; permission checks in `repo/apps/api/internal/middleware/require_permission.go:23`.
+- **Route-level authorization — Pass**  
+  Evidence: permission guards per protected route `repo/apps/api/internal/httpserver/server.go:90`; permission middleware denies missing permission `repo/apps/api/internal/middleware/require_permission.go:23`.
 
-- **Object-level authorization: Pass**  
-  Evidence: repository `Get/Update/Delete` paths apply data-scope filters, e.g. candidates `repo/apps/api/internal/repository/recruitment_repo.go:120`, cases `repo/apps/api/internal/repository/case_repo.go:112`, compliance `repo/apps/api/internal/repository/compliance_repo.go:37`.
+- **Object-level authorization — Partial Pass**  
+  Evidence: repository scope predicates for core entities (cases/recruitment/compliance) `repo/apps/api/internal/repository/case_repo.go:112`, `repo/apps/api/internal/repository/recruitment_repo.go:121`, `repo/apps/api/internal/repository/compliance_repo.go:38`; **gap** in Rx attachment validation path (`exists` only) `repo/apps/api/internal/service/compliance_service.go:694`.
 
-- **Function-level authorization: Partial Pass**  
-  Evidence: service-level scope guards (`requireScope`, `RowVisible`) in multiple services, e.g. `repo/apps/api/internal/service/recruitment_service.go:355`, `repo/apps/api/internal/service/compliance_service.go:657`.  
-  Gap: `GET /api/v1/health` protection is optional by env, not mandatory (`repo/apps/api/internal/handler/health.go:22`).
+- **Function-level authorization — Partial Pass**  
+  Evidence: service-level `requireScope` + `RowVisible` guards `repo/apps/api/internal/service/recruitment_service.go:355`, `repo/apps/api/internal/service/compliance_service.go:665`, `repo/apps/api/internal/service/case_service.go:114`; **gap** for purchase-attachment access check as above.
 
-- **Tenant / user data isolation: Pass**  
-  Evidence: centralized scope expression builder and scoped query application `repo/apps/api/internal/repository/scope_where.go:45`; file accessibility bound to scope or uploader `repo/apps/api/internal/repository/file_repo.go:125`.
+- **Tenant/user data isolation — Partial Pass**  
+  Evidence: centralized scope expression builder `repo/apps/api/internal/repository/scope_where.go:45`; file access utilities exist `repo/apps/api/internal/repository/file_repo.go:163`; **gap** because compliance check does not use these utilities for attachment IDs.
 
-- **Admin / internal / debug endpoint protection: Partial Pass**  
-  Evidence: admin RBAC routes protected by `system.rbac` in `repo/apps/api/internal/httpserver/server.go:164`; open `/healthz` and optionally open `/api/v1/health` in `repo/apps/api/internal/httpserver/server.go:79`, `repo/apps/api/internal/handler/health.go:22`.
+- **Admin/internal/debug protection — Partial Pass**  
+  Evidence: RBAC admin endpoints behind `system.rbac` permission `repo/apps/api/internal/httpserver/server.go:160`; health endpoint relies on internal token header `repo/apps/api/internal/handler/health.go:26`.  
+  Boundary: manual runtime network exposure review required.
 
 ## 7. Tests and Logging Review
 
-- **Unit tests: Partial Pass**  
-  Exists across service/repository/middleware packages (e.g. `match_score_test.go`, `case_duplicate_window_test.go`, `endpoint_permission_matrix_test.go`), but limited auth/session lifecycle depth.
+- **Unit tests — Pass (with risk gaps)**
+  - Broad Go unit/integration-style coverage across services/repos/middleware exists `repo/apps/api/internal/**/*_test.go`
+  - Auth/session lifecycle has meaningful service integration tests `repo/apps/api/internal/service/auth_service_integration_test.go:51`
 
-- **API / integration tests: Partial Pass**  
-  Integration-style tests exist for compliance purchase enforcement, case creation duplicate guard, file dedup, audit mutation, and scope checks (`service/*integration_test.go`, `repository/case_scope_integration_test.go`), but auth/session lifecycle integration coverage is weak.
+- **API/integration tests — Partial Pass**
+  - Contract and route-guard tests exist, plus compliance/case/file/audit integration tests `repo/apps/api/internal/httpserver/auth_matrix_contract_test.go:8`, `repo/apps/api/internal/service/compliance_purchase_enforcement_integration_test.go:16`, `repo/apps/api/internal/service/file_upload_dedup_integration_test.go:17`
+  - Missing targeted integration test for Rx attachment scope authorization gap.
 
-- **Logging categories / observability: Pass**  
-  Structured operational logging categories exist for auth/authz/session/audit/PII/crypto events in `repo/apps/api/internal/oplog/oplog.go:36`.
+- **Logging categories/observability — Pass**
+  - Structured event categories for auth, authz, session, audit, PII access, crypto errors exist in `repo/apps/api/internal/oplog/oplog.go:36`.
 
-- **Sensitive-data leakage risk in logs/responses: Partial Pass**  
-  Candidate list/detail masking and audit payload sanitization exist (`recruitment_service.go`, `audit_service.go`), but seeded admin credential pattern and optional open health endpoint remain security posture concerns.
+- **Sensitive-data leakage risk in logs/responses — Partial Pass**
+  - PII masking/sanitization in candidate/audit paths exists `repo/apps/api/internal/service/recruitment_service.go:241`, `repo/apps/api/internal/service/audit_service.go:159`
+  - Risk remains via authorization bypass path in compliance attachment usage (not leakage per se, but sensitive control bypass).
 
 ## 8. Test Coverage Assessment (Static Audit)
 
 ### 8.1 Test Overview
 
-- **Unit tests exist:** yes (`apps/api/internal/**/*test.go`)
-- **API/integration-style tests exist:** yes (multiple `*_integration_test.go` files)
-- **Frontend tests exist:** no (no test files in web app; no test script)
-- **Framework(s):** Go `testing` package, with in-memory SQLite for many service/repo tests
-- **Test entry points documented:** yes (`repo/README.md:71`, `repo/README.md:82`)
-- **Boundary note:** Documented scripts depend on Docker/runtime and were not executed in this static audit (`repo/run_tests.sh:9`, `repo/API_tests/run_api_tests.sh:9`, `repo/e2e_tests/run_e2e_tests.sh:9`)
+- **Unit tests exist:** Yes (`repo/apps/api/internal/**/*_test.go`)
+- **API/integration tests exist:** Yes (multiple `*_integration_test.go` + route contract tests)
+- **Frontend tests exist:** Limited (2 Vitest files) `repo/apps/web/src/stores/auth.test.ts:1`, `repo/apps/web/src/utils/dataScope.test.ts:1`
+- **Frameworks:** Go `testing` with SQLite in-memory fixtures; Vitest for frontend
+- **Test entry points documented:** `repo/README.md:79`, `repo/apps/web/package.json:10`, `repo/apps/web/vitest.config.ts:10`
+- **Documentation test commands:** present, but runtime-only scripts (not executed in this audit) `repo/run_tests.sh:9`
 
 ### 8.2 Coverage Mapping Table
 
 | Requirement / Risk Point | Mapped Test Case(s) | Key Assertion / Fixture / Mock | Coverage Assessment | Gap | Minimum Test Addition |
 |---|---|---|---|---|---|
-| Route authn/authz wiring | `apps/api/internal/httpserver/auth_matrix_contract_test.go:8`; `apps/api/internal/middleware/endpoint_permission_matrix_test.go:13` | Static route guard substring checks and middleware 403 matrix | basically covered | Does not validate real DB-backed principal/session path | Add black-box HTTP tests with real auth middleware + seeded DB |
-| Data-scope isolation | `apps/api/internal/service/scope_isolation_test.go:12`; `apps/api/internal/repository/case_scope_integration_test.go:15` | Scope mismatch returns forbidden / filtered rows | sufficient | Mostly institution/dept/team checks; limited cross-module object scenarios | Add cross-resource object-level scope abuse tests (case/file/audit export) |
-| Case numbering + 5-minute duplicate guard | `apps/api/internal/service/case_create_integration_test.go:18`; `apps/api/internal/service/case_duplicate_window_test.go:7` | Serial suffix increments; duplicate rejected | sufficient | No concurrency race test for serial allocation | Add concurrent create test for same institution/day |
-| Compliance purchase restrictions (Rx + frequency) | `apps/api/internal/service/compliance_purchase_enforcement_integration_test.go:16`; `apps/api/internal/service/compliance_check_purchase_test.go:12` | Rx requirement + frequency checks + scoped behavior | sufficient | No end-to-end handler-level tests for typed errors | Add handler/API tests for code/status matrix |
-| File chunk upload + dedup + type validation | `apps/api/internal/service/file_upload_dedup_integration_test.go:17` | Dedup true on second upload; MIME spoof rejected | sufficient | No permission/scope misuse tests on download/link endpoints | Add authz tests for file link/download across scopes |
-| Audit mutation behavior + PII sanitization | `apps/api/internal/service/audit_mutation_integration_test.go:16`; `apps/api/internal/service/audit_log_persistence_test.go:14` | `_changedFields` presence, PII redaction, persistence | sufficient | Limited coverage for export authorization paths | Add export ownership and full_access override tests |
-| Auth/session lifecycle (login, TTL, logout invalidation) | only constructor-level mention in `apps/api/internal/service/service_constructors_test.go:14`; bearer parsing in `apps/api/internal/middleware/auth_test.go:5` | No end-to-end assertions for session semantics | missing | Critical requirement not meaningfully tested | Add integration tests for valid login, expired token, logout revocation, invalid credentials |
-| Recruitment matching scoring logic | `apps/api/internal/service/match_score_test.go:9` | Score bounds, breakdown weights, title token fallback | basically covered | No tests for recommendation endpoints and merge-triggered scoring impact | Add service tests for similar-candidate/position ranking behavior |
-| Frontend critical flows | none | n/a | missing | UI regressions undetected | Add frontend unit/E2E smoke tests |
+| Auth login/session/logout lifecycle | `repo/apps/api/internal/service/auth_service_integration_test.go:51` | login success, token lookup, logout invalidation, expiry behavior | sufficient | handler-level auth matrix beyond basics | add HTTP-level auth contract tests for typed errors |
+| Route authz middleware presence | `repo/apps/api/internal/httpserver/auth_matrix_contract_test.go:8` | required middleware/permission substrings in routes | basically covered | static substring checks only | add black-box endpoint authorization tests |
+| Scope isolation | `repo/apps/api/internal/service/scope_isolation_test.go:12`, `repo/apps/api/internal/repository/case_scope_integration_test.go:15` | mismatched scope returns forbidden/filtered rows | basically covered | not all object references covered | add cross-resource OLA tests (file link + purchase attachment) |
+| Case numbering + duplicate 5-minute guard | `repo/apps/api/internal/service/case_create_integration_test.go:18` | serial increment + duplicate block | sufficient | no concurrency stress/race checks | add concurrent serial allocation tests |
+| Compliance Rx/frequency logic | `repo/apps/api/internal/service/compliance_purchase_enforcement_integration_test.go:16` | Rx required, frequency scopes | basically covered | does not test attachment scope/ownership authorization | add negative case with existing but unauthorized file ID |
+| File chunk upload + dedup + spoof validation | `repo/apps/api/internal/service/file_upload_dedup_integration_test.go:17` | dedup true on repeat; MIME spoof rejected | sufficient | limited cross-scope download/link abuse coverage | add cross-scope file access tests |
+| Audit mutation persistence/sanitization | `repo/apps/api/internal/service/audit_mutation_integration_test.go:16`, `repo/apps/api/internal/service/audit_log_persistence_test.go:14` | changed-fields, PII redaction, persistence | basically covered | export payload completeness not tested | add tests for export content columns and ownership checks |
+| Frontend critical business flows | only auth/data-scope utility tests: `repo/apps/web/src/stores/auth.test.ts:6`, `repo/apps/web/src/utils/dataScope.test.ts:5` | permission helper/default scope selection | insufficient | no UI flow tests for recruitment/compliance/cases | add component/E2E smoke tests for core prompts |
 
 ### 8.3 Security Coverage Audit
 
-- **Authentication:** **insufficient**  
-  Minimal direct tests; no robust session lifecycle integration tests.
-- **Route authorization:** **basically covered**  
-  Permission matrix and route guard presence are tested statically.
-- **Object-level authorization:** **basically covered**  
-  Scope enforcement tests exist in services/repos, but not exhaustive across all resources.
-- **Tenant/data isolation:** **basically covered**  
-  Institution/dept/team predicates are exercised in multiple tests.
-- **Admin/internal protection:** **insufficient**  
-  Little/no direct test coverage for health endpoint hardening and export-owner access edge cases.
+- **Authentication:** basically covered (service integration present), but could use endpoint-level negative-path expansion.
+- **Route authorization:** basically covered (middleware/route matrix checks).
+- **Object-level authorization:** insufficient for prescription-attachment path (key high-risk gap untested).
+- **Tenant/data isolation:** basically covered for primary entities; insufficient for cross-resource attachment usage in compliance check.
+- **Admin/internal protection:** partial; no dedicated tests for health token behavior and export/ownership edge cases.
 
 ### 8.4 Final Coverage Judgment
 
-- **Final Coverage Judgment: Partial Pass**
-- Major business/security areas (scope enforcement, case duplicate guard, compliance restriction logic, file dedup, audit mutation sanitation) have meaningful static tests.  
-- However, **critical auth/session lifecycle coverage is missing**, and frontend has no automated tests, so severe defects could still remain undetected while many tests pass.
+- **Partial Pass**
+- Major risks are covered for auth lifecycle, scope filtering, case duplicate guard, compliance core logic, file dedup, and audit mutation behavior.
+- However, uncovered authorization edges (notably prescription attachment scope/ownership) mean severe defects could still pass current tests.
 
 ## 9. Final Notes
 
-- This is a static-only assessment; no runtime claims are made beyond code/test evidence.
-- The strongest blockers are security posture and requirement-fit risk, not general code organization.
-- Priority remediation should start with privileged seed handling and robust resume parsing strategy, then strengthen auth/session and frontend testing.
+- This report is static-only and avoids runtime success claims.
+- Findings are root-cause oriented and evidence-linked; repeated symptoms are merged.
+- Manual verification should prioritize the high-severity compliance security/control gaps before acceptance.
