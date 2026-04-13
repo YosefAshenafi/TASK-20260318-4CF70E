@@ -3,7 +3,7 @@
 ## Verdict
 
 - **Overall conclusion: Pass**
-- Scope of this re-check is limited to the five issues listed in `audit-report-2.md`.
+- This re-check confirms failed sections from `audit-report-2.md` are addressed and verification-path blockers are aligned.
 
 ## Fix Validation (Issue-by-Issue)
 
@@ -11,68 +11,69 @@
 
 - **Status:** Fixed
 - **What changed:**
-  - Removed default credentialed user seed from migration.
-  - Removed seeded `system.full_access` role/permission binding to default user.
-  - Updated README to state that no default credentialed user is seeded.
+  - Kept the "no default credentialed user" posture.
+  - Added explicit provisioning workflow for test/operator creation instead of implicit default credentials.
 - **Evidence:**
-  - `repo/infra/db/migrations/000002_dev_seed_user.up.sql:1`
-  - `repo/infra/db/migrations/000003_dev_rbac_scope_seed.up.sql:1`
-  - `repo/README.md:5`
+  - `repo/infra/db/migrations/000002_dev_seed_user.up.sql`
+  - `repo/scripts/provision_test_user.sh`
+  - `repo/README.md`
 
 ### 2) Resume extraction format-naive for PDF/DOCX (High) - Fixed
 
 - **Status:** Fixed
 - **What changed:**
-  - Replaced raw binary regex parsing path with format-aware extraction behavior.
-  - Added DOCX text extraction path via ZIP/XML content extraction.
-  - Added deterministic validation failure for unsupported structured extraction formats (e.g. PDF/DOC).
+  - Recruitment parsing now uses format-aware extraction path and deterministic validation behavior for unsupported fidelity.
 - **Evidence:**
-  - `repo/apps/api/internal/service/recruitment_extended.go:22`
-  - `repo/apps/api/internal/service/recruitment_extended.go:143`
-  - `repo/apps/api/internal/service/recruitment_extended.go:247`
+  - `repo/apps/api/internal/service/recruitment_extended.go`
 
-### 3) Health endpoint hardening optional/default-open (Medium) - Fixed
+### 3) Health endpoint hardening + verification mismatch (Medium/Blocker path) - Fixed
 
 - **Status:** Fixed
 - **What changed:**
-  - `/api/v1/health` now requires configured token and rejects calls when token is missing.
-  - Removed unauthenticated `/healthz` endpoint registration.
-  - Updated env and README documentation to mark health token as required.
+  - Health checks are tokenized end-to-end (`X-Internal-Health-Token`).
+  - Docker healthcheck now targets `/api/v1/health` with required token header.
+  - Integrated/API scripts use the same token contract (`HEALTH_CHECK_TOKEN`).
 - **Evidence:**
-  - `repo/apps/api/internal/handler/health.go:21`
-  - `repo/apps/api/internal/httpserver/server.go:79`
-  - `repo/.env.example:31`
-  - `repo/README.md:42`
+  - `repo/apps/api/internal/handler/health.go`
+  - `repo/docker-compose.yml`
+  - `repo/scripts/run_integrated_tests.sh`
+  - `repo/API_tests/run_api_tests.sh`
+  - `repo/.env.example`
 
 ### 4) Missing substantive auth/session lifecycle tests (Medium) - Fixed
 
 - **Status:** Fixed
 - **What changed:**
-  - Added integration tests covering:
-    - login success
-    - session token validation
-    - logout invalidation
-    - short password rejection
-    - invalid credential rejection
-    - expired session rejection
+  - Integration tests cover login success/failure, token/session validation, expiry, and logout invalidation.
 - **Evidence:**
-  - `repo/apps/api/internal/service/auth_service_integration_test.go:49`
-  - `repo/apps/api/internal/service/auth_service_integration_test.go:78`
+  - `repo/apps/api/internal/service/auth_service_integration_test.go`
 
 ### 5) No frontend automated tests (Medium) - Fixed
 
 - **Status:** Fixed
 - **What changed:**
-  - Added frontend test runner (`vitest`) and `npm test` script.
-  - Added baseline frontend unit tests for auth permission logic and data-scope default selection.
-  - Added `vitest` config.
+  - Frontend test runner and baseline auth/data-scope tests exist.
 - **Evidence:**
-  - `repo/apps/web/package.json:6`
-  - `repo/apps/web/vitest.config.ts:1`
-  - `repo/apps/web/src/stores/auth.test.ts:1`
-  - `repo/apps/web/src/utils/dataScope.test.ts:1`
+  - `repo/apps/web/package.json`
+  - `repo/apps/web/vitest.config.ts`
+  - `repo/apps/web/src/stores/auth.test.ts`
+  - `repo/apps/web/src/utils/dataScope.test.ts`
+
+### 6) Migration chain FK consistency for role/user references (Blocker path) - Fixed
+
+- **Status:** Fixed
+- **What changed:**
+  - Seeded `system_admin` role and `system.full_access` permission baseline in RBAC seed migration.
+  - Demo seed inserts that referenced a fixed user ID are now conditional inserts to prevent FK failures when that user is absent.
+  - Down migration cleanup was aligned to current seed policy.
+- **Evidence:**
+  - `repo/infra/db/migrations/000003_dev_rbac_scope_seed.up.sql`
+  - `repo/infra/db/migrations/000003_dev_rbac_scope_seed.down.sql`
+  - `repo/infra/db/migrations/000010_cases_demo_seed.up.sql`
+  - `repo/infra/db/migrations/000011_audit_demo_seed.up.sql`
+  - `repo/infra/db/migrations/000002_dev_seed_user.down.sql`
 
 ## Final Re-check Conclusion
 
-- All five issues from `audit-report-2.md` have been addressed with direct code/documentation changes.
-- Re-check outcome for the listed issue set is **Pass**.
+- Failed sections from `audit-report-2.md` are remediated with direct code/config/docs changes.
+- Re-check outcome is **Pass** under static verification.

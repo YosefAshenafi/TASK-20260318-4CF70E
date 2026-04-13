@@ -11,6 +11,7 @@ services:
       MYSQL_DSN: pharmaops:pharmaops@tcp(db:3306)/pharmaops?parseTime=true&loc=UTC&charset=utf8mb4
       FILE_STORAGE_ROOT: /var/lib/pharmaops/files
       PII_AES_KEY_HEX: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      HEALTH_CHECK_TOKEN: dev-internal-health-token
     depends_on:
       db:
         condition: service_healthy
@@ -19,7 +20,7 @@ services:
     volumes:
       - pharmaops_files:/var/lib/pharmaops/files
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD-SHELL", "wget --header=\"X-Internal-Health-Token: $$HEALTH_CHECK_TOKEN\" -qO- http://127.0.0.1:8080/api/v1/health >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 12

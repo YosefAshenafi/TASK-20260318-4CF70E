@@ -6,7 +6,18 @@ Run and verify everything through **Docker** from this directory (`repo/`).
 
 No default credentialed user is seeded by migrations.
 
-Create users via RBAC APIs (or a dedicated provisioning script) after initial migration.
+Provision an initial operator for API/E2E verification using the helper script:
+
+```bash
+cd repo
+API_TEST_USERNAME=qa_admin \
+API_TEST_PASSWORD_BCRYPT='$2a$12$replace_with_real_bcrypt_hash' \
+bash scripts/provision_test_user.sh
+```
+
+The helper maps the user to:
+- role `system_admin` (`10000000-0000-4000-8000-000000000020`)
+- scope `inst:dev-root` (`10000000-0000-4000-8000-000000000010`)
 
 ## Stack
 
@@ -78,6 +89,11 @@ This builds/starts the Compose stack, performs a **web smoke check** (HTTP 200 o
 ```bash
 # Go unit tests:
 cd apps/api && go test ./...
+
+# Required for contract/e2e scripts:
+export HEALTH_CHECK_TOKEN=dev-internal-health-token
+export API_TEST_USERNAME=qa_admin
+export API_TEST_PASSWORD='your-plaintext-password'
 
 # API contract tests (requires running stack):
 bash API_tests/run_api_tests.sh

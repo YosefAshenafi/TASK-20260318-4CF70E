@@ -1,7 +1,38 @@
--- Dev seed: institution hierarchy and a base data scope only.
--- Security hardening: no privileged role/permission/user bindings are seeded.
+-- Dev seed: institution hierarchy, base scope, and system admin role baseline.
+-- Security hardening: no default credentialed user is seeded.
 
 SET NAMES utf8mb4;
+
+INSERT INTO roles (id, slug, name, description, created_at, updated_at)
+VALUES (
+  '10000000-0000-4000-8000-000000000020',
+  'system_admin',
+  'System Administrator',
+  'Platform-wide administration role.',
+  CURRENT_TIMESTAMP(3),
+  CURRENT_TIMESTAMP(3)
+)
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  description = VALUES(description),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO permissions (id, code, description, created_at)
+VALUES (
+  '10000000-0000-4000-8000-000000000030',
+  'system.full_access',
+  'Bypass route-level permission gates for trusted administrators.',
+  CURRENT_TIMESTAMP(3)
+)
+ON DUPLICATE KEY UPDATE description = VALUES(description);
+
+INSERT INTO role_permissions (role_id, permission_id, created_at)
+VALUES (
+  '10000000-0000-4000-8000-000000000020',
+  '10000000-0000-4000-8000-000000000030',
+  CURRENT_TIMESTAMP(3)
+)
+ON DUPLICATE KEY UPDATE role_id = role_id;
 
 INSERT INTO institutions (id, code, name, created_at, updated_at)
 VALUES (

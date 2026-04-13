@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Contract checks against the running Compose stack (nginx → api). Requires migrations + dev seed.
+# Contract checks against the running Compose stack (nginx → api).
+# Requires a provisioned API test user with broad permissions.
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENVE="$REPO/scripts/assert_ok_envelope.py"
@@ -9,9 +10,17 @@ ENVE="$REPO/scripts/assert_ok_envelope.py"
 echo "[API] Running API contract checks (Compose stack must be up)..."
 
 BASE="${API_BASE_URL:-http://127.0.0.1:8080}"
+HEALTH_TOKEN="${HEALTH_CHECK_TOKEN:-dev-internal-health-token}"
+API_TEST_USERNAME="${API_TEST_USERNAME:-}"
+API_TEST_PASSWORD="${API_TEST_PASSWORD:-}"
+
+if [[ -z "$API_TEST_USERNAME" || -z "$API_TEST_PASSWORD" ]]; then
+  echo "[API] Set API_TEST_USERNAME and API_TEST_PASSWORD to a provisioned user before running contract checks."
+  exit 1
+fi
 
 echo "[API] GET $BASE/api/v1/health"
-curl -fsS "$BASE/api/v1/health" | python3 "$ENVE"
+curl -fsS -H "X-Internal-Health-Token: $HEALTH_TOKEN" "$BASE/api/v1/health" | python3 "$ENVE"
 
 echo "[API] GET $BASE/api/v1/recruitment/candidates without Authorization (expect 401)"
 CODE="$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/v1/recruitment/candidates?page=1&pageSize=10")"
@@ -20,10 +29,10 @@ if [[ "$CODE" != "401" ]]; then
   exit 1
 fi
 
-echo "[API] POST $BASE/api/v1/auth/login (dev admin)"
+echo "[API] POST $BASE/api/v1/auth/login (configured test user)"
 LOGIN_JSON="$(curl -fsS -X POST "$BASE/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"password"}')"
+  -d "{\"username\":\"$API_TEST_USERNAME\",\"password\":\"$API_TEST_PASSWORD\"}")"
 echo "$LOGIN_JSON" | python3 "$ENVE"
 TOKEN="$(echo "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["token"])')"
 if [[ -z "$TOKEN" ]]; then
@@ -34,14 +43,11 @@ fi
 echo "[API] GET $BASE/api/v1/auth/me (session + RBAC)"
 ME_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/auth/me")"
 echo "$ME_JSON" | python3 "$ENVE"
-echo "$ME_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); data=d.get("data") or {}; assert "system_admin" in (data.get("roles") or []), data' || {
-  echo "[API] /auth/me expected system_admin role from dev seed"
+TEST_USER_ID="$(echo "$ME_JSON" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("data") or {}).get("id",""))')"
+if [[ -z "$TEST_USER_ID" ]]; then
+  echo "[API] /auth/me did not include data.id"
   exit 1
-}
-echo "$ME_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); data=d.get("data") or {}; perms=data.get("permissions") or []; assert "system.full_access" in perms, data' || {
-  echo "[API] /auth/me expected system.full_access permission"
-  exit 1
-}
+fi
 
 echo "[API] GET $BASE/api/v1/recruitment/candidates"
 CAND_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
@@ -92,14 +98,14 @@ echo "$RBAC_JSON" | python3 "$ENVE"
 echo "[API] GET $BASE/api/v1/roles"
 ROLES_LIST_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/roles")"
 echo "$ROLES_LIST_JSON" | python3 "$ENVE"
-echo "$ROLES_LIST_JSON" | grep -q 'business_specialist' || {
-  echo "[API] roles list expected seeded business_specialist slug"
+echo "$ROLES_LIST_JSON" | grep -q 'system_admin' || {
+  echo "[API] roles list expected system_admin role"
   exit 1
 }
 
 echo "[API] GET $BASE/api/v1/users/{id}"
 USER_DETAIL_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/v1/users/00000000-0000-4000-8000-000000000001")"
+  "$BASE/api/v1/users/$TEST_USER_ID")"
 echo "$USER_DETAIL_JSON" | python3 "$ENVE"
 echo "$USER_DETAIL_JSON" | python3 -c 'import json,sys; assert "roleIds" in (json.load(sys.stdin).get("data") or {})' || {
   echo "[API] user detail expected data.roleIds"
@@ -126,7 +132,7 @@ fi
 echo "[API] POST /auth/login with bad credentials returns 401"
 BAD_LOGIN_CODE="$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"wrongpassword"}')"
+  -d "{\"username\":\"$API_TEST_USERNAME\",\"password\":\"wrongpassword\"}")"
 if [[ "$BAD_LOGIN_CODE" != "401" ]]; then
   echo "[API] expected 401 for bad credentials, got $BAD_LOGIN_CODE"
   exit 1
@@ -135,7 +141,7 @@ fi
 echo "[API] POST /auth/login with short password returns 400"
 SHORT_PW_CODE="$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"short"}')"
+  -d "{\"username\":\"$API_TEST_USERNAME\",\"password\":\"short\"}")"
 if [[ "$SHORT_PW_CODE" != "400" ]]; then
   echo "[API] expected 400 for short password, got $SHORT_PW_CODE"
   exit 1
@@ -195,7 +201,7 @@ for ROUTE in \
   fi
 done
 
-echo "[API] GET candidate detail (dev seed)"
+echo "[API] GET candidate detail"
 CAND_IDS="$(echo "$CAND_JSON" | python3 -c 'import json,sys; items=json.load(sys.stdin)["data"]["items"]; print(items[0]["id"] if items else "")')"
 if [[ -n "$CAND_IDS" ]]; then
   DETAIL_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/recruitment/candidates/$CAND_IDS")"
@@ -211,7 +217,7 @@ assert "institutionId" in d, "missing institutionId"
   }
 fi
 
-echo "[API] Audit logs contain entries (dev seed + mutations from earlier tests)"
+echo "[API] Audit logs contain entries (seed data + mutations from earlier checks)"
 AUDIT_COUNT="$(echo "$AUDIT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["total"])')"
 if [[ "$AUDIT_COUNT" -lt 1 ]]; then
   echo "[API] expected at least 1 audit log entry"

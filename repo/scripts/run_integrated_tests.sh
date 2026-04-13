@@ -5,6 +5,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${TEST_BASE_URL:-http://127.0.0.1:8080}"
 ENVE="$REPO/scripts/assert_ok_envelope.py"
+HEALTH_TOKEN="${HEALTH_CHECK_TOKEN:-dev-internal-health-token}"
 
 echo "Smoke: web UI ($BASE/)"
 for _ in $(seq 1 60); do
@@ -18,13 +19,13 @@ curl -fsS "$BASE/" >/dev/null
 
 echo "Smoke: API health (via nginx → api)"
 for _ in $(seq 1 60); do
-  if curl -fsS "$BASE/api/v1/health" >/dev/null 2>&1; then
+  if curl -fsS -H "X-Internal-Health-Token: $HEALTH_TOKEN" "$BASE/api/v1/health" >/dev/null 2>&1; then
     echo "API /api/v1/health responded OK."
     break
   fi
   sleep 1
 done
-curl -fsS "$BASE/api/v1/health" | python3 "$ENVE"
+curl -fsS -H "X-Internal-Health-Token: $HEALTH_TOKEN" "$BASE/api/v1/health" | python3 "$ENVE"
 
 echo
 echo "1/4 Unit tests"

@@ -29,12 +29,13 @@ INSERT INTO cases (
 ON DUPLICATE KEY UPDATE title = VALUES(title);
 
 INSERT INTO case_processing_records (id, case_id, step_code, actor_user_id, note, created_at)
-VALUES (
+SELECT
   '50000000-0000-4000-8000-000000000011',
   '50000000-0000-4000-8000-000000000001',
   'intake',
-  '00000000-0000-4000-8000-000000000001',
+  u.id,
   'Recorded from demo seed.',
   CURRENT_TIMESTAMP(3)
-)
+FROM users u
+WHERE u.id = '00000000-0000-4000-8000-000000000001'
 ON DUPLICATE KEY UPDATE step_code = VALUES(step_code);
