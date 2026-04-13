@@ -58,3 +58,31 @@ export async function apiDelete<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), { method: 'DELETE', headers: baseHeaders() })
   return parseEnvelope<T>(res)
 }
+
+/** PUT raw bytes (e.g. resumable upload chunks). Treats 204 No Content as success. */
+export async function apiPutBytes(path: string, body: ArrayBuffer | Uint8Array): Promise<void> {
+  const res = await fetch(apiUrl(path), {
+    method: 'PUT',
+    headers: { ...baseHeaders(), 'Content-Type': 'application/octet-stream' },
+    body: body as BodyInit,
+  })
+  if (res.status === 204) {
+    return
+  }
+  const text = await res.text()
+  if (!text) {
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+    return
+  }
+  let env: ApiEnvelope<unknown>
+  try {
+    env = JSON.parse(text) as ApiEnvelope<unknown>
+  } catch {
+    throw new Error(`HTTP ${res.status}`)
+  }
+  if (!res.ok || env.code !== 'OK') {
+    throw new Error(env.message || `HTTP ${res.status}`)
+  }
+}

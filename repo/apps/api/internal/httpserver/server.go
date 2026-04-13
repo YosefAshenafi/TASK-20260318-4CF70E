@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -43,6 +44,21 @@ func (s *Server) Run() error {
 	complianceRepo := repository.NewComplianceRepository(s.db)
 	complianceSvc := service.NewComplianceService(complianceRepo)
 	complianceH := handler.NewComplianceHandler(complianceSvc)
+	caseRepo := repository.NewCaseRepository(s.db)
+	caseSvc := service.NewCaseService(caseRepo)
+	caseH := handler.NewCaseHandler(caseSvc)
+	auditRepo := repository.NewAuditRepository(s.db)
+	auditSvc := service.NewAuditService(auditRepo)
+	auditH := handler.NewAuditHandler(auditSvc)
+	rbacRepo := repository.NewRbacRepository(s.db)
+	rbacSvc := service.NewRbacService(userRepo, rbacRepo)
+	rbacH := handler.NewRbacHandler(rbacSvc)
+	fileRepo := repository.NewFileRepository(s.db)
+	fileSvc := service.NewFileService(s.cfg.FileStorageRoot, fileRepo, caseRepo)
+	fileH := handler.NewFileHandler(fileSvc)
+	if s.cfg.FileStorageRoot != "" {
+		_ = os.MkdirAll(s.cfg.FileStorageRoot, 0o700)
+	}
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.Status(200)
@@ -85,6 +101,43 @@ func (s *Server) Run() error {
 			authz.GET("/compliance/restrictions/:id", middleware.RequirePermission("compliance.view"), complianceH.GetRestriction)
 			authz.POST("/compliance/restrictions", middleware.RequirePermission("compliance.manage"), complianceH.CreateRestriction)
 			authz.PATCH("/compliance/restrictions/:id", middleware.RequirePermission("compliance.manage"), complianceH.PatchRestriction)
+
+			authz.GET("/case-ledger/search", middleware.RequirePermission("cases.view"), caseH.SearchCaseLedger)
+			authz.GET("/cases", middleware.RequirePermission("cases.view"), caseH.ListCases)
+			authz.POST("/cases", middleware.RequirePermission("cases.manage"), caseH.CreateCase)
+			authz.GET("/cases/:id", middleware.RequirePermission("cases.view"), caseH.GetCase)
+			authz.PATCH("/cases/:id", middleware.RequirePermission("cases.manage"), caseH.PatchCase)
+			authz.POST("/cases/:id/assign", middleware.RequirePermission("cases.manage"), caseH.AssignCase)
+			authz.GET("/cases/:id/processing-records", middleware.RequirePermission("cases.view"), caseH.ListProcessingRecords)
+			authz.POST("/cases/:id/processing-records", middleware.RequirePermission("cases.manage"), caseH.PostProcessingRecord)
+			authz.GET("/cases/:id/status-transitions", middleware.RequirePermission("cases.view"), caseH.ListStatusTransitions)
+			authz.POST("/cases/:id/status-transitions", middleware.RequirePermission("cases.manage"), caseH.PostStatusTransition)
+
+			authz.GET("/audit/logs", middleware.RequirePermission("audit.view"), auditH.ListLogs)
+			authz.POST("/audit/logs/export", middleware.RequirePermission("audit.view"), auditH.RequestExport)
+
+			authz.GET("/files", middleware.RequirePermission("files.view"), fileH.ListFiles)
+			authz.POST("/files/uploads/init", middleware.RequirePermission("files.manage"), fileH.InitUpload)
+			authz.PUT("/files/uploads/:uploadId/chunks/:chunkIndex", middleware.RequirePermission("files.manage"), fileH.PutChunk)
+			authz.POST("/files/uploads/:uploadId/complete", middleware.RequirePermission("files.manage"), fileH.CompleteUpload)
+			authz.GET("/files/uploads/:uploadId", middleware.RequirePermission("files.view"), fileH.GetUpload)
+			authz.GET("/files/:fileId", middleware.RequirePermission("files.view"), fileH.GetFile)
+			authz.GET("/files/:fileId/download", middleware.RequirePermission("files.view"), fileH.DownloadFile)
+			authz.POST("/files/:fileId/link", middleware.RequirePermission("files.manage"), fileH.LinkFile)
+
+			authz.GET("/users", middleware.RequirePermission("system.rbac"), rbacH.ListUsers)
+			authz.POST("/users", middleware.RequirePermission("system.rbac"), rbacH.CreateUser)
+			authz.GET("/users/:id", middleware.RequirePermission("system.rbac"), rbacH.GetUser)
+			authz.PATCH("/users/:id", middleware.RequirePermission("system.rbac"), rbacH.PatchUser)
+			authz.POST("/users/:id/scopes", middleware.RequirePermission("system.rbac"), rbacH.SetUserScopes)
+			authz.GET("/roles", middleware.RequirePermission("system.rbac"), rbacH.ListRoles)
+			authz.POST("/roles", middleware.RequirePermission("system.rbac"), rbacH.CreateRole)
+			authz.GET("/permissions", middleware.RequirePermission("system.rbac"), rbacH.ListPermissions)
+			authz.GET("/scopes", middleware.RequirePermission("system.rbac"), rbacH.ListScopes)
+			authz.POST("/scopes", middleware.RequirePermission("system.rbac"), rbacH.CreateScope)
+			authz.GET("/roles/:id", middleware.RequirePermission("system.rbac"), rbacH.GetRole)
+			authz.PATCH("/roles/:id", middleware.RequirePermission("system.rbac"), rbacH.PatchRole)
+			authz.POST("/roles/:id/permissions", middleware.RequirePermission("system.rbac"), rbacH.SetRolePermissions)
 		}
 	}
 

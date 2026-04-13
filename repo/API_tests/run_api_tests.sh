@@ -80,4 +80,65 @@ echo "$REST_JSON" | grep -q '"code":"OK"' || {
   exit 1
 }
 
+echo "[API] GET $BASE/api/v1/cases (Step 4b cases)"
+CASES_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/cases?page=1&pageSize=10")"
+echo "$CASES_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] cases list expected OK"
+  exit 1
+}
+echo "$CASES_JSON" | grep -q '"items"' || {
+  echo "[API] cases list expected items array"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/audit/logs (Step 4b audit)"
+AUDIT_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/audit/logs?page=1&pageSize=10")"
+echo "$AUDIT_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] audit logs expected OK"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/users (Step 4b RBAC)"
+RBAC_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/users")"
+echo "$RBAC_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] users list expected OK"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/roles (primary personas from design migration 000013)"
+ROLES_LIST_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/roles")"
+echo "$ROLES_LIST_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] roles list expected OK"
+  exit 1
+}
+echo "$ROLES_LIST_JSON" | grep -q 'business_specialist' || {
+  echo "[API] roles list expected seeded business_specialist"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/users/{id} (RBAC user detail)"
+USER_DETAIL_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/users/00000000-0000-4000-8000-000000000001")"
+echo "$USER_DETAIL_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] user detail expected OK"
+  exit 1
+}
+echo "$USER_DETAIL_JSON" | grep -q '"roleIds"' || {
+  echo "[API] user detail expected roleIds"
+  exit 1
+}
+
+echo "[API] GET $BASE/api/v1/files (file objects list)"
+FILES_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/files?page=1&pageSize=10")"
+echo "$FILES_JSON" | grep -q '"code":"OK"' || {
+  echo "[API] files list expected OK"
+  exit 1
+}
+echo "$FILES_JSON" | grep -q '"items"' || {
+  echo "[API] files list expected items array"
+  exit 1
+}
+
 echo "[API] Smoke checks passed."

@@ -18,4 +18,7 @@ func TestLoad_DefaultHTTPAddr(t *testing.T) {
 	if c.Environment != "development" {
 		t.Fatalf("Environment: %q", c.Environment)
 	}
+	if c.FileStorageRoot == "" {
+		t.Fatal("expected default FileStorageRoot")
+	}
 }

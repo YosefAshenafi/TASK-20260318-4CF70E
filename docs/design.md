@@ -248,6 +248,19 @@ Core tables:
 * `user_data_scopes`
 * `sessions`
 
+#### 8.1.1 Primary roles (seed)
+
+Primary personas from **System Overview (section 1)** are represented as rows in `roles` (seeded in `000013_primary_roles_seed`). Display names map to stable slugs for RBAC and the `/system/rbac` UI:
+
+| Persona | `roles.slug` |
+|--------|----------------|
+| Business Specialist | `business_specialist` |
+| Compliance Administrator | `compliance_administrator` |
+| Recruitment Specialist | `recruitment_specialist` |
+| System Administrator | `system_admin` |
+
+Default `role_permissions` bundles follow each persona’s scope: Business Specialist emphasizes case operations plus read access across recruitment/compliance; Compliance Administrator owns compliance modules and audit log read; Recruitment Specialist owns recruitment and file workflows; System Administrator is the elevated operator (dev seed grants `system.full_access`). Institutions may tailor permissions without renaming slugs.
+
 ### 8.2 Recruitment
 
 Core tables:
@@ -330,6 +343,8 @@ Core tables:
 ## 10. Authorization and Data Scope Enforcement
 
 ### 10.1 RBAC
+
+Primary roles are defined in **8.1.1** (`roles.slug` values). The Roles screen lists every role row; personas from section 1 appear with a **Primary** badge when the slug matches the canonical four.
 
 Permission checks happen in two stages:
 
