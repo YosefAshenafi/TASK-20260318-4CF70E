@@ -61,6 +61,33 @@ Docker checkpoint:
 - Run API + DB (+ web where available) together.
 - Validate health endpoints and integration smoke checks.
 
+### 4b) Domain feature implementation (replace placeholders)
+
+Step **4** delivers **integration**: auth, RBAC/data scope, envelope, DB connectivity.  
+Step **4b** delivers **product**: real screens and APIs from `docs/design.md` and `docs/api-spec.md`, replacing `ModulePlaceholderView` and stub routes with working flows.
+
+Work in **domain slices** (order flexible; complete one slice before claiming the next):
+
+- **Recruitment** — candidates, positions, imports, duplicates/merge, matching (see design §7.2, §5.4).
+- **Compliance** — qualifications lifecycle, restrictions, violations (§7.3).
+- **Cases** — intake, assignment, timeline, status transitions, ledger (§7.4).
+- **Files** — upload sessions, chunks, dedup, references (§7.5).
+- **Audit** — query, export, append-only events (§7.6).
+- **System / RBAC UI** — user/role/scope admin as specified (routes under `/system/...`).
+
+Each slice should include:
+
+- Vue views + routing (no long-lived placeholders for that slice’s primary screens).
+- Go handlers/services/repos aligned with `docs/api-spec.md`.
+- RBAC permission + data-scope enforcement on new endpoints.
+- Tests (unit/API/E2E) for that slice; extend `repo/API_tests/` and `repo/e2e_tests/` as behavior appears.
+
+Docker checkpoint (per slice or per milestone):
+
+- `cd repo && docker compose up -d --build`, migrations applied, manual smoke of new flows through **http://127.0.0.1:8080/** (same-origin `/api`).
+
+**Relationship to Step 5:** Step 5 formalizes the **aggregated test pipeline**. You may start Step 5 in parallel once the pipeline skeleton exists; **test coverage should grow as Step 4b domains land** (do not treat Step 5 as “only after all of 4b is done” unless you choose that gate).
+
 ### 5) Testing (`run_tests.sh`)
 
 - Add aggregated pipeline to run:
@@ -68,6 +95,7 @@ Docker checkpoint:
   - Backend unit tests
   - API tests
 - Ensure non-zero exit on failure and clear pass/fail output.
+- Expand stages and fixtures as Step **4b** adds real behavior (smoke tests alone are not sufficient long-term).
 
 Docker checkpoint:
 - Run test pipeline against Dockerized services.
@@ -104,3 +132,5 @@ Docker checkpoint:
 ## Working Rule
 
 We execute one step at a time, review output, and only then proceed to the next step.
+
+Step **4b** is intentionally **iterative**: ship domain slices (recruitment, compliance, etc.) in sequence; each slice should be reviewable and testable before moving to the next.
