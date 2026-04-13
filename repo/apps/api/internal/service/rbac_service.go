@@ -71,10 +71,11 @@ type DataScopeDTO struct {
 type RbacService struct {
 	users *repository.UserRepository
 	repo  *repository.RbacRepository
+	audit *AuditService
 }
 
-func NewRbacService(users *repository.UserRepository, rbac *repository.RbacRepository) *RbacService {
-	return &RbacService{users: users, repo: rbac}
+func NewRbacService(users *repository.UserRepository, rbac *repository.RbacRepository, audit *AuditService) *RbacService {
+	return &RbacService{users: users, repo: rbac, audit: audit}
 }
 
 func (s *RbacService) ListUsers(ctx context.Context) ([]UserSummaryDTO, error) {
@@ -168,11 +169,12 @@ type UpdateRoleInput struct {
 	Description *string
 }
 
-func (s *RbacService) UpdateRole(ctx context.Context, id string, in UpdateRoleInput) (*RoleDTO, error) {
+func (s *RbacService) UpdateRole(ctx context.Context, id string, in UpdateRoleInput, meta AuditRequestMeta) (*RoleDTO, error) {
 	r, err := s.repo.GetRole(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	beforeMap := DTOToAuditMap(toRoleDTO(r))
 	if in.Name != nil {
 		r.Name = strings.TrimSpace(*in.Name)
 		if r.Name == "" {
@@ -190,6 +192,15 @@ func (s *RbacService) UpdateRole(ctx context.Context, id string, in UpdateRoleIn
 		return nil, err
 	}
 	dto := toRoleDTO(loaded)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "role.update",
+		TargetType: "role",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -197,7 +208,7 @@ func (s *RbacService) UpdateRole(ctx context.Context, id string, in UpdateRoleIn
 var ErrRbacValidation = errors.New("rbac validation failed")
 
 // SetRolePermissions replaces role_permissions for a role.
-func (s *RbacService) SetRolePermissions(ctx context.Context, roleID string, permissionIDs []string) error {
+func (s *RbacService) SetRolePermissions(ctx context.Context, roleID string, permissionIDs []string, meta AuditRequestMeta) error {
 	if _, err := s.repo.GetRole(ctx, roleID); err != nil {
 		return err
 	}
@@ -210,7 +221,27 @@ func (s *RbacService) SetRolePermissions(ctx context.Context, roleID string, per
 			return ErrRbacValidation
 		}
 	}
-	return s.repo.ReplaceRolePermissions(ctx, roleID, permissionIDs)
+	beforeIDs, err := s.repo.PermissionIDsForRole(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.ReplaceRolePermissions(ctx, roleID, permissionIDs); err != nil {
+		return err
+	}
+	afterIDs, err := s.repo.PermissionIDsForRole(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "role.permissions_set",
+		TargetType: "role",
+		TargetID:   roleID,
+		Before:     map[string]any{"permissionIds": beforeIDs},
+		After:      map[string]any{"permissionIds": afterIDs},
+		Meta:       meta,
+	})
+	return nil
 }
 
 func (s *RbacService) ListScopes(ctx context.Context) ([]DataScopeDTO, error) {
@@ -276,7 +307,7 @@ type CreateUserInput struct {
 }
 
 // CreateUser provisions a login account and role links.
-func (s *RbacService) CreateUser(ctx context.Context, in CreateUserInput) (*UserDetailDTO, error) {
+func (s *RbacService) CreateUser(ctx context.Context, in CreateUserInput, meta AuditRequestMeta) (*UserDetailDTO, error) {
 	username := strings.TrimSpace(in.Username)
 	display := strings.TrimSpace(in.DisplayName)
 	if username == "" || display == "" {
@@ -327,7 +358,21 @@ func (s *RbacService) CreateUser(ctx context.Context, in CreateUserInput) (*User
 	if err != nil {
 		return nil, err
 	}
-	return s.GetUser(ctx, uid)
+	detail, err := s.GetUser(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	after := DTOToAuditMap(detail)
+	after["password"] = "(set)"
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "user.create",
+		TargetType: "user",
+		TargetID:   uid,
+		After:      after,
+		Meta:       meta,
+	})
+	return detail, nil
 }
 
 // UpdateUserInput for PATCH /users/:id.
@@ -339,10 +384,15 @@ type UpdateUserInput struct {
 }
 
 // UpdateUser patches profile, optional password, and optionally replaces roles.
-func (s *RbacService) UpdateUser(ctx context.Context, id string, in UpdateUserInput) (*UserDetailDTO, error) {
+func (s *RbacService) UpdateUser(ctx context.Context, id string, in UpdateUserInput, meta AuditRequestMeta) (*UserDetailDTO, error) {
 	if _, err := s.users.FindByID(ctx, id); err != nil {
 		return nil, err
 	}
+	before, err := s.GetUser(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	beforeMap := DTOToAuditMap(before)
 	patch := map[string]any{}
 	if in.DisplayName != nil {
 		d := strings.TrimSpace(*in.DisplayName)
@@ -384,11 +434,28 @@ func (s *RbacService) UpdateUser(ctx context.Context, id string, in UpdateUserIn
 			return nil, err
 		}
 	}
-	return s.GetUser(ctx, id)
+	after, err := s.GetUser(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	afterMap := DTOToAuditMap(after)
+	if in.Password != nil && *in.Password != "" {
+		afterMap["password"] = "(changed)"
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "user.update",
+		TargetType: "user",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      afterMap,
+		Meta:       meta,
+	})
+	return after, nil
 }
 
 // SetUserScopes replaces data scopes for a user (POST /users/:id/scopes).
-func (s *RbacService) SetUserScopes(ctx context.Context, userID string, scopeIDs []string) error {
+func (s *RbacService) SetUserScopes(ctx context.Context, userID string, scopeIDs []string, meta AuditRequestMeta) error {
 	if _, err := s.users.FindByID(ctx, userID); err != nil {
 		return err
 	}
@@ -401,7 +468,27 @@ func (s *RbacService) SetUserScopes(ctx context.Context, userID string, scopeIDs
 			return ErrRbacValidation
 		}
 	}
-	return s.repo.ReplaceUserScopes(ctx, userID, scopeIDs)
+	beforeIDs, err := s.repo.ScopeIDsForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.ReplaceUserScopes(ctx, userID, scopeIDs); err != nil {
+		return err
+	}
+	afterIDs, err := s.repo.ScopeIDsForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "user.scopes_set",
+		TargetType: "user",
+		TargetID:   userID,
+		Before:     map[string]any{"scopeIds": beforeIDs},
+		After:      map[string]any{"scopeIds": afterIDs},
+		Meta:       meta,
+	})
+	return nil
 }
 
 var roleSlugRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,62}$`)
@@ -414,7 +501,7 @@ type CreateRoleInput struct {
 }
 
 // CreateRole inserts a new role (slug unique).
-func (s *RbacService) CreateRole(ctx context.Context, in CreateRoleInput) (*RoleDTO, error) {
+func (s *RbacService) CreateRole(ctx context.Context, in CreateRoleInput, meta AuditRequestMeta) (*RoleDTO, error) {
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
 	name := strings.TrimSpace(in.Name)
 	if slug == "" || name == "" || !roleSlugRe.MatchString(slug) {
@@ -440,6 +527,14 @@ func (s *RbacService) CreateRole(ctx context.Context, in CreateRoleInput) (*Role
 		return nil, err
 	}
 	dto := toRoleDTO(row)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "role.create",
+		TargetType: "role",
+		TargetID:   row.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -463,7 +558,7 @@ func emptyStringPtr(s *string) *string {
 }
 
 // CreateDataScope inserts a data scope row; validates institution/dept/team chain.
-func (s *RbacService) CreateDataScope(ctx context.Context, in CreateDataScopeInput) (*DataScopeDTO, error) {
+func (s *RbacService) CreateDataScope(ctx context.Context, in CreateDataScopeInput, meta AuditRequestMeta) (*DataScopeDTO, error) {
 	in.DepartmentID = emptyStringPtr(in.DepartmentID)
 	in.TeamID = emptyStringPtr(in.TeamID)
 	key := strings.TrimSpace(in.ScopeKey)
@@ -496,12 +591,21 @@ func (s *RbacService) CreateDataScope(ctx context.Context, in CreateDataScopeInp
 	if err := s.repo.CreateDataScope(ctx, row); err != nil {
 		return nil, err
 	}
-	return &DataScopeDTO{
+	dto := DataScopeDTO{
 		ID:            row.ID,
 		ScopeKey:      row.ScopeKey,
 		InstitutionID: row.InstitutionID,
 		DepartmentID:  row.DepartmentID,
 		TeamID:        row.TeamID,
 		CreatedAt:     row.CreatedAt.UTC().Format(time.RFC3339),
-	}, nil
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "rbac",
+		Operation:  "scope.create",
+		TargetType: "data_scope",
+		TargetID:   row.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
+	return &dto, nil
 }

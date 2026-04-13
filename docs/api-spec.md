@@ -78,6 +78,26 @@ Operations:
 }
 ```
 
+`GET /auth/me` response data (authenticated session; includes resolved roles, permissions, and **data scopes** for UI defaults):
+
+```json
+{
+  "id": "uuid-user",
+  "username": "alice",
+  "roles": ["recruitment_specialist"],
+  "permissions": ["recruitment.view"],
+  "scopes": [
+    {
+      "id": "uuid-scope-row",
+      "scopeKey": "inst_acme",
+      "institutionId": "uuid-inst",
+      "departmentId": null,
+      "teamId": null
+    }
+  ]
+}
+```
+
 Typed errors (`AuthError.code`):
 
 - `AUTH_INVALID_CREDENTIALS`

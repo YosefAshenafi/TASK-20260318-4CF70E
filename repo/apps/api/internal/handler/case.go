@@ -114,7 +114,7 @@ func (h *CaseHandler) CreateCase(c *gin.Context) {
 		Title:         body.Title,
 		Description:   body.Description,
 		ReportedAt:    t,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -158,7 +158,7 @@ func (h *CaseHandler) PatchCase(c *gin.Context) {
 		Description:  body.Description,
 		DepartmentID: body.DepartmentID,
 		TeamID:       body.TeamID,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -194,7 +194,7 @@ func (h *CaseHandler) AssignCase(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	dto, err := h.svc.AssignCase(c.Request.Context(), pr, id, body.AssigneeUserID)
+	dto, err := h.svc.AssignCase(c.Request.Context(), pr, id, body.AssigneeUserID, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -228,7 +228,7 @@ func (h *CaseHandler) PostProcessingRecord(c *gin.Context) {
 	}
 	id := c.Param("id")
 	uid := c.GetString("userID")
-	dto, err := h.svc.AddProcessingRecord(c.Request.Context(), pr, id, uid, body.StepCode, body.Note)
+	dto, err := h.svc.AddProcessingRecord(c.Request.Context(), pr, id, uid, body.StepCode, body.Note, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -288,7 +288,7 @@ func (h *CaseHandler) PostStatusTransition(c *gin.Context) {
 	}
 	id := c.Param("id")
 	uid := c.GetString("userID")
-	dto, err := h.svc.AddStatusTransition(c.Request.Context(), pr, id, uid, body.ToStatus)
+	dto, err := h.svc.AddStatusTransition(c.Request.Context(), pr, id, uid, body.ToStatus, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return

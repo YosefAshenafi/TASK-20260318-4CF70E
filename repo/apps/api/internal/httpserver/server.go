@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"pharmaops/api/internal/config"
+	cryptopii "pharmaops/api/internal/crypto/pii"
 	"pharmaops/api/internal/handler"
 	"pharmaops/api/internal/middleware"
 	"pharmaops/api/internal/repository"
@@ -38,23 +39,27 @@ func (s *Server) Run() error {
 	authSvc := service.NewAuthService(s.cfg, userRepo, sessRepo)
 	authH := handler.NewAuthHandler(authSvc, userRepo)
 	healthH := handler.NewHealthHandler(s.db)
-	recRepo := repository.NewRecruitmentRepository(s.db)
-	recSvc := service.NewRecruitmentService(recRepo)
-	recH := handler.NewRecruitmentHandler(recSvc)
-	complianceRepo := repository.NewComplianceRepository(s.db)
-	complianceSvc := service.NewComplianceService(complianceRepo)
-	complianceH := handler.NewComplianceHandler(complianceSvc)
-	caseRepo := repository.NewCaseRepository(s.db)
-	caseSvc := service.NewCaseService(caseRepo)
-	caseH := handler.NewCaseHandler(caseSvc)
 	auditRepo := repository.NewAuditRepository(s.db)
 	auditSvc := service.NewAuditService(auditRepo)
+	recRepo := repository.NewRecruitmentRepository(s.db)
+	piiCipher, err := cryptopii.NewCipherFromHex(s.cfg.PIIAESKeyHex)
+	if err != nil {
+		return fmt.Errorf("PII AES key: %w", err)
+	}
+	recSvc := service.NewRecruitmentService(recRepo, piiCipher, auditSvc)
+	recH := handler.NewRecruitmentHandler(recSvc)
+	complianceRepo := repository.NewComplianceRepository(s.db)
+	complianceSvc := service.NewComplianceService(complianceRepo, auditSvc)
+	complianceH := handler.NewComplianceHandler(complianceSvc)
+	caseRepo := repository.NewCaseRepository(s.db)
+	caseSvc := service.NewCaseService(caseRepo, auditSvc)
+	caseH := handler.NewCaseHandler(caseSvc)
 	auditH := handler.NewAuditHandler(auditSvc)
 	rbacRepo := repository.NewRbacRepository(s.db)
-	rbacSvc := service.NewRbacService(userRepo, rbacRepo)
+	rbacSvc := service.NewRbacService(userRepo, rbacRepo, auditSvc)
 	rbacH := handler.NewRbacHandler(rbacSvc)
 	fileRepo := repository.NewFileRepository(s.db)
-	fileSvc := service.NewFileService(s.cfg.FileStorageRoot, fileRepo, caseRepo)
+	fileSvc := service.NewFileService(s.cfg.FileStorageRoot, fileRepo, caseRepo, auditSvc)
 	fileH := handler.NewFileHandler(fileSvc)
 	if s.cfg.FileStorageRoot != "" {
 		_ = os.MkdirAll(s.cfg.FileStorageRoot, 0o700)
@@ -76,10 +81,21 @@ func (s *Server) Run() error {
 			authz.GET("/auth/me", authH.Me)
 
 			authz.GET("/recruitment/candidates", middleware.RequirePermission("recruitment.view"), recH.ListCandidates)
-			authz.GET("/recruitment/candidates/:id", middleware.RequirePermission("recruitment.view"), recH.GetCandidate)
 			authz.POST("/recruitment/candidates", middleware.RequirePermission("recruitment.manage"), recH.CreateCandidate)
+			authz.POST("/recruitment/candidates/imports", middleware.RequirePermission("recruitment.manage"), recH.CreateImportBatch)
+			authz.GET("/recruitment/candidates/imports/:importId", middleware.RequirePermission("recruitment.view"), recH.GetImportBatch)
+			authz.POST("/recruitment/candidates/imports/:importId/commit", middleware.RequirePermission("recruitment.manage"), recH.CommitImportBatch)
+			authz.GET("/recruitment/candidates/duplicates", middleware.RequirePermission("recruitment.view"), recH.ListDuplicateCandidates)
+			authz.POST("/recruitment/candidates/merge", middleware.RequirePermission("recruitment.manage"), recH.MergeCandidates)
+			authz.GET("/recruitment/candidates/merge-history", middleware.RequirePermission("recruitment.view"), recH.ListMergeHistory)
+			authz.GET("/recruitment/candidates/:id", middleware.RequirePermission("recruitment.view"), recH.GetCandidate)
 			authz.PATCH("/recruitment/candidates/:id", middleware.RequirePermission("recruitment.manage"), recH.PatchCandidate)
 			authz.DELETE("/recruitment/candidates/:id", middleware.RequirePermission("recruitment.manage"), recH.DeleteCandidate)
+
+			authz.POST("/recruitment/match/candidate-to-position", middleware.RequirePermission("recruitment.view"), recH.MatchCandidateToPosition)
+			authz.POST("/recruitment/match/position-to-candidate", middleware.RequirePermission("recruitment.view"), recH.MatchPositionToCandidate)
+			authz.GET("/recruitment/recommendations/similar-candidates/:candidateId", middleware.RequirePermission("recruitment.view"), recH.SimilarCandidates)
+			authz.GET("/recruitment/recommendations/similar-positions/:positionId", middleware.RequirePermission("recruitment.view"), recH.SimilarPositions)
 
 			authz.GET("/recruitment/positions", middleware.RequirePermission("recruitment.view"), recH.ListPositions)
 			authz.GET("/recruitment/positions/:id", middleware.RequirePermission("recruitment.view"), recH.GetPosition)

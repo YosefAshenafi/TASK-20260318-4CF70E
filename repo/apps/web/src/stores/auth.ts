@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
+import type { DataScope } from '@/utils/dataScope'
+
 /** Matches backend `access.PermissionFullAccess`; grants all route/menu permission checks. */
 export const PERMISSION_FULL_ACCESS = 'system.full_access'
 
@@ -24,9 +26,12 @@ async function readEnvelope(res: Response): Promise<Envelope> {
 }
 
 export const useAuthStore = defineStore('auth', () => {
+  const userId = ref<string | null>(null)
   const username = ref<string | null>(null)
   const permissions = ref<string[]>([])
   const roles = ref<string[]>([])
+  /** Data scopes from GET /auth/me — drives default institution/dept/team for creates. */
+  const scopes = ref<DataScope[]>([])
   const loadingSession = ref(false)
 
   let sessionBootstrap: Promise<void> | null = null
@@ -42,9 +47,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   function clearLocal(): void {
     sessionStorage.removeItem(TOKEN_KEY)
+    userId.value = null
     username.value = null
     permissions.value = []
     roles.value = []
+    scopes.value = []
     sessionBootstrap = null
   }
 
@@ -67,10 +74,13 @@ export const useAuthStore = defineStore('auth', () => {
       username: string
       roles?: string[]
       permissions?: string[]
+      scopes?: DataScope[]
     }
+    userId.value = d.id
     username.value = d.username
     roles.value = d.roles ?? []
     permissions.value = d.permissions ?? []
+    scopes.value = Array.isArray(d.scopes) ? d.scopes : []
   }
 
   /** Call once before route guards; restores session from storage via GET /auth/me. */
@@ -125,9 +135,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
+    userId,
     username,
     permissions,
     roles,
+    scopes,
     loadingSession,
     isAuthenticated,
     hasPermission,

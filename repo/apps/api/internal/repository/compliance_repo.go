@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/model"
 )
 
@@ -17,28 +18,25 @@ func NewComplianceRepository(db *gorm.DB) *ComplianceRepository {
 	return &ComplianceRepository{db: db}
 }
 
-func (r *ComplianceRepository) ListQualifications(ctx context.Context, institutionIDs []string, offset, limit int, orderClause string) ([]model.QualificationProfile, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.QualificationProfile{}).
-		Where("institution_id IN ?", institutionIDs)
+func (r *ComplianceRepository) ListQualifications(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.QualificationProfile, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.QualificationProfile{})
+	base = applyInstitutionScope(base, p, "institution_id")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.QualificationProfile
-	err := r.db.WithContext(ctx).
-		Where("institution_id IN ?", institutionIDs).
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.QualificationProfile{})
+	q = applyInstitutionScope(q, p, "institution_id")
+	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
 
-func (r *ComplianceRepository) GetQualification(ctx context.Context, id string, institutionIDs []string) (*model.QualificationProfile, error) {
+func (r *ComplianceRepository) GetQualification(ctx context.Context, id string, p *access.Principal) (*model.QualificationProfile, error) {
 	var q model.QualificationProfile
-	err := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		First(&q).Error
+	db := r.db.WithContext(ctx).Where("id = ?", id)
+	db = applyInstitutionScope(db, p, "institution_id")
+	err := db.First(&q).Error
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +47,10 @@ func (r *ComplianceRepository) CreateQualification(ctx context.Context, q *model
 	return r.db.WithContext(ctx).Create(q).Error
 }
 
-func (r *ComplianceRepository) UpdateQualification(ctx context.Context, q *model.QualificationProfile, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", q.ID, institutionIDs).
-		Updates(map[string]interface{}{
+func (r *ComplianceRepository) UpdateQualification(ctx context.Context, q *model.QualificationProfile, p *access.Principal) error {
+	db := r.db.WithContext(ctx).Model(&model.QualificationProfile{}).Where("id = ?", q.ID)
+	db = applyInstitutionScope(db, p, "institution_id")
+	res := db.Updates(map[string]interface{}{
 			"display_name":    q.DisplayName,
 			"expires_on":      q.ExpiresOn,
 			"metadata_json":   q.MetadataJSON,
@@ -69,19 +67,19 @@ func (r *ComplianceRepository) UpdateQualification(ctx context.Context, q *model
 	return nil
 }
 
-func (r *ComplianceRepository) ListQualificationsExpiringBetween(ctx context.Context, institutionIDs []string, from, to time.Time) ([]model.QualificationProfile, error) {
+func (r *ComplianceRepository) ListQualificationsExpiringBetween(ctx context.Context, p *access.Principal, from, to time.Time) ([]model.QualificationProfile, error) {
 	var rows []model.QualificationProfile
-	err := r.db.WithContext(ctx).
-		Where("institution_id IN ? AND status = ? AND expires_on IS NOT NULL AND expires_on >= ? AND expires_on <= ?",
-			institutionIDs, "active", from, to).
-		Order("expires_on ASC").
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.QualificationProfile{}).
+		Where("status = ? AND expires_on IS NOT NULL AND expires_on >= ? AND expires_on <= ?", "active", from, to)
+	q = applyInstitutionScope(q, p, "institution_id")
+	err := q.Order("expires_on ASC").Find(&rows).Error
 	return rows, err
 }
 
-func (r *ComplianceRepository) DeactivateExpiredQualifications(ctx context.Context, institutionIDs []string, before time.Time) (int64, error) {
+func (r *ComplianceRepository) DeactivateExpiredQualifications(ctx context.Context, p *access.Principal, before time.Time) (int64, error) {
 	q := r.db.WithContext(ctx).Model(&model.QualificationProfile{}).
-		Where("institution_id IN ? AND status = ? AND expires_on IS NOT NULL AND expires_on < ?", institutionIDs, "active", before)
+		Where("status = ? AND expires_on IS NOT NULL AND expires_on < ?", "active", before)
+	q = applyInstitutionScope(q, p, "institution_id")
 	res := q.Updates(map[string]interface{}{
 		"status":          "inactive",
 		"deactivated_at":  time.Now().UTC(),
@@ -103,28 +101,25 @@ func (r *ComplianceRepository) ListActiveRestrictionsForPurchase(ctx context.Con
 	return rows, err
 }
 
-func (r *ComplianceRepository) ListRestrictions(ctx context.Context, institutionIDs []string, offset, limit int, orderClause string) ([]model.PurchaseRestriction, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.PurchaseRestriction{}).
-		Where("institution_id IN ?", institutionIDs)
+func (r *ComplianceRepository) ListRestrictions(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.PurchaseRestriction, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.PurchaseRestriction{})
+	base = applyInstitutionScope(base, p, "institution_id")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.PurchaseRestriction
-	err := r.db.WithContext(ctx).
-		Where("institution_id IN ?", institutionIDs).
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.PurchaseRestriction{})
+	q = applyInstitutionScope(q, p, "institution_id")
+	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
 
-func (r *ComplianceRepository) GetRestriction(ctx context.Context, id string, institutionIDs []string) (*model.PurchaseRestriction, error) {
+func (r *ComplianceRepository) GetRestriction(ctx context.Context, id string, p *access.Principal) (*model.PurchaseRestriction, error) {
 	var row model.PurchaseRestriction
-	err := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		First(&row).Error
+	db := r.db.WithContext(ctx).Where("id = ?", id)
+	db = applyInstitutionScope(db, p, "institution_id")
+	err := db.First(&row).Error
 	if err != nil {
 		return nil, err
 	}
@@ -135,10 +130,10 @@ func (r *ComplianceRepository) CreateRestriction(ctx context.Context, row *model
 	return r.db.WithContext(ctx).Create(row).Error
 }
 
-func (r *ComplianceRepository) UpdateRestriction(ctx context.Context, row *model.PurchaseRestriction, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", row.ID, institutionIDs).
-		Updates(map[string]interface{}{
+func (r *ComplianceRepository) UpdateRestriction(ctx context.Context, row *model.PurchaseRestriction, p *access.Principal) error {
+	db := r.db.WithContext(ctx).Model(&model.PurchaseRestriction{}).Where("id = ?", row.ID)
+	db = applyInstitutionScope(db, p, "institution_id")
+	res := db.Updates(map[string]interface{}{
 			"client_id":      row.ClientID,
 			"medication_id":  row.MedicationID,
 			"rule_json":      row.RuleJSON,
@@ -154,20 +149,17 @@ func (r *ComplianceRepository) UpdateRestriction(ctx context.Context, row *model
 	return nil
 }
 
-func (r *ComplianceRepository) ListViolations(ctx context.Context, institutionIDs []string, offset, limit int, orderClause string) ([]model.RestrictionViolationRecord, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.RestrictionViolationRecord{}).
-		Where("institution_id IN ?", institutionIDs)
+func (r *ComplianceRepository) ListViolations(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.RestrictionViolationRecord, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.RestrictionViolationRecord{})
+	base = applyInstitutionScope(base, p, "institution_id")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.RestrictionViolationRecord
-	err := r.db.WithContext(ctx).
-		Where("institution_id IN ?", institutionIDs).
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.RestrictionViolationRecord{})
+	q = applyInstitutionScope(q, p, "institution_id")
+	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
 

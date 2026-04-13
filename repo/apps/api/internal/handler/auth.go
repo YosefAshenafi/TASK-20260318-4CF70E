@@ -29,11 +29,20 @@ type loginBody struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type meScopeDTO struct {
+	ID             string  `json:"id"`
+	ScopeKey       string  `json:"scopeKey"`
+	InstitutionID  string  `json:"institutionId"`
+	DepartmentID   *string `json:"departmentId,omitempty"`
+	TeamID         *string `json:"teamId,omitempty"`
+}
+
 type meUser struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	Roles       []string `json:"roles"`
-	Permissions []string `json:"permissions"`
+	ID          string        `json:"id"`
+	Username    string        `json:"username"`
+	Roles       []string      `json:"roles"`
+	Permissions []string      `json:"permissions"`
+	Scopes      []meScopeDTO  `json:"scopes"`
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -88,15 +97,26 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	}
 	roles := []string{}
 	var perms []string
+	var scopeDTOs []meScopeDTO
 	if pr, ok := middleware.GetPrincipal(c); ok && pr != nil {
 		roles = pr.RoleSlugs
 		perms = permissionCodesSorted(pr)
+		for _, s := range pr.Scopes {
+			scopeDTOs = append(scopeDTOs, meScopeDTO{
+				ID:            s.ID,
+				ScopeKey:      s.ScopeKey,
+				InstitutionID: s.InstitutionID,
+				DepartmentID:  s.DepartmentID,
+				TeamID:        s.TeamID,
+			})
+		}
 	}
 	response.OK(c, meUser{
 		ID:          u.ID,
 		Username:    u.Username,
 		Roles:       roles,
 		Permissions: perms,
+		Scopes:      scopeDTOs,
 	})
 }
 

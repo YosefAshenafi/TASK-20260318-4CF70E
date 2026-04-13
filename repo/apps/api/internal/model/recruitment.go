@@ -54,3 +54,55 @@ type Position struct {
 }
 
 func (Position) TableName() string { return "positions" }
+
+// PositionRequirement maps position_requirements (used for matching / recommendations).
+type PositionRequirement struct {
+	ID         string `gorm:"column:id;type:char(36);primaryKey"`
+	PositionID string `gorm:"column:position_id;type:char(36);not null;index"`
+	SkillName  string `gorm:"column:skill_name;not null"`
+	WeightPct  uint8  `gorm:"column:weight_pct;not null;default:0"`
+	IsRequired bool   `gorm:"column:is_required;not null;default:1"`
+}
+
+func (PositionRequirement) TableName() string { return "position_requirements" }
+
+// CandidateImportBatch maps candidate_import_batches.
+type CandidateImportBatch struct {
+	ID                   string     `gorm:"column:id;type:char(36);primaryKey"`
+	InstitutionID        string     `gorm:"column:institution_id;type:char(36);not null;index"`
+	Status               string     `gorm:"column:status;not null;default:pending"`
+	MappingJSON          []byte     `gorm:"column:mapping_json"`
+	ValidationReportJSON []byte     `gorm:"column:validation_report_json"`
+	CreatedByUserID      string     `gorm:"column:created_by_user_id;type:char(36);not null"`
+	CommittedAt          *time.Time `gorm:"column:committed_at"`
+	CreatedAt            time.Time  `gorm:"column:created_at"`
+}
+
+func (CandidateImportBatch) TableName() string { return "candidate_import_batches" }
+
+// CandidateMergeHistory maps candidate_merge_history.
+type CandidateMergeHistory struct {
+	ID                     string    `gorm:"column:id;type:char(36);primaryKey"`
+	BaseCandidateID        string    `gorm:"column:base_candidate_id;type:char(36);not null;index"`
+	SourceCandidateIDsJSON []byte    `gorm:"column:source_candidate_ids_json;type:json;not null"`
+	MergedFieldsJSON       []byte    `gorm:"column:merged_fields_json"`
+	BeforeSnapshotJSON     []byte    `gorm:"column:before_snapshot_json"`
+	AfterSnapshotJSON      []byte    `gorm:"column:after_snapshot_json"`
+	OperatorUserID         string    `gorm:"column:operator_user_id;type:char(36);not null"`
+	CreatedAt              time.Time `gorm:"column:created_at"`
+}
+
+func (CandidateMergeHistory) TableName() string { return "candidate_merge_history" }
+
+// MatchScoreSnapshot maps match_score_snapshots.
+type MatchScoreSnapshot struct {
+	ID            string    `gorm:"column:id;type:char(36);primaryKey"`
+	CandidateID   string    `gorm:"column:candidate_id;type:char(36);not null;index"`
+	PositionID    string    `gorm:"column:position_id;type:char(36);not null;index"`
+	Score         uint16    `gorm:"column:score;not null"`
+	BreakdownJSON []byte    `gorm:"column:breakdown_json"`
+	ReasonsJSON   []byte    `gorm:"column:reasons_json"`
+	ComputedAt    time.Time `gorm:"column:computed_at"`
+}
+
+func (MatchScoreSnapshot) TableName() string { return "match_score_snapshots" }

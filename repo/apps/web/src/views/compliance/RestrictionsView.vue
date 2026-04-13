@@ -4,7 +4,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
-import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { useCreateScopeContext } from '@/composables/useDataScope'
 import { humanizeTechnicalLabel } from '@/utils/display'
 import { useAuthStore } from '@/stores/auth'
 
@@ -41,6 +41,7 @@ type ViolationListResp = {
 }
 
 const auth = useAuthStore()
+const { requireContext } = useCreateScopeContext()
 const canManage = () => auth.hasPermission('compliance.manage')
 
 const loading = ref(false)
@@ -190,8 +191,15 @@ async function submitCreate() {
   }
   dialogSaving.value = true
   try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
     await apiPost<RestrictionRow>('/api/v1/compliance/restrictions', {
-      institutionId: DEV_INSTITUTION_ID,
+      institutionId: scope.institutionId,
       clientId: formClient.value.trim(),
       medicationId: formMed.value.trim() || undefined,
       rule,
@@ -273,8 +281,15 @@ async function submitCheck() {
   }
   checkSaving.value = true
   try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
     const res = await apiPost<{ allowed: boolean; reasons: string[] }>('/api/v1/compliance/restrictions/check-purchase', {
-      institutionId: DEV_INSTITUTION_ID,
+      institutionId: scope.institutionId,
       clientId: checkClient.value.trim(),
       medicationId: checkMed.value.trim(),
       isControlled: checkControlled.value,

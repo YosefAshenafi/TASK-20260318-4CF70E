@@ -13,6 +13,13 @@ BASE="${API_BASE_URL:-http://127.0.0.1:8080}"
 echo "[API] GET $BASE/api/v1/health"
 curl -fsS "$BASE/api/v1/health" | python3 "$ENVE"
 
+echo "[API] GET $BASE/api/v1/recruitment/candidates without Authorization (expect 401)"
+CODE="$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/v1/recruitment/candidates?page=1&pageSize=10")"
+if [[ "$CODE" != "401" ]]; then
+  echo "[API] expected HTTP 401 without bearer token, got $CODE"
+  exit 1
+fi
+
 echo "[API] POST $BASE/api/v1/auth/login (dev admin)"
 LOGIN_JSON="$(curl -fsS -X POST "$BASE/api/v1/auth/login" \
   -H 'Content-Type: application/json' \

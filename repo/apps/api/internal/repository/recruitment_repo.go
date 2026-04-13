@@ -2,13 +2,46 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/model"
 )
+
+type mergeSnapshot struct {
+	Name             string   `json:"name"`
+	ExperienceYears  *int     `json:"experienceYears,omitempty"`
+	EducationLevel   *string  `json:"educationLevel,omitempty"`
+	SkillNames       []string `json:"skills"`
+	Tags             []string `json:"tags"`
+}
+
+func skillNamesFrom(c *model.Candidate) []string {
+	out := make([]string, 0, len(c.Skills))
+	for _, s := range c.Skills {
+		out = append(out, s.SkillName)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedSkillNamesFromMap(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 type RecruitmentRepository struct {
 	db *gorm.DB
@@ -18,30 +51,25 @@ func NewRecruitmentRepository(db *gorm.DB) *RecruitmentRepository {
 	return &RecruitmentRepository{db: db}
 }
 
-func (r *RecruitmentRepository) ListCandidates(ctx context.Context, institutionIDs []string, offset, limit int, orderClause string) ([]model.Candidate, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.Candidate{}).
-		Where("institution_id IN ?", institutionIDs)
+func (r *RecruitmentRepository) ListCandidates(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.Candidate, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.Candidate{})
+	base = applyDataScope(base, p, "institution_id", "department_id", "team_id")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.Candidate
-	err := r.db.WithContext(ctx).
-		Preload("Skills").
-		Where("institution_id IN ?", institutionIDs).
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Preload("Skills")
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
 
-func (r *RecruitmentRepository) GetCandidate(ctx context.Context, id string, institutionIDs []string) (*model.Candidate, error) {
+func (r *RecruitmentRepository) GetCandidate(ctx context.Context, id string, p *access.Principal) (*model.Candidate, error) {
 	var c model.Candidate
-	err := r.db.WithContext(ctx).
-		Preload("Skills").
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		First(&c).Error
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Preload("Skills").Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.First(&c).Error
 	if err != nil {
 		return nil, err
 	}
@@ -86,16 +114,20 @@ func (r *RecruitmentRepository) CreateCandidate(ctx context.Context, c *model.Ca
 	})
 }
 
-func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Candidate, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", c.ID, institutionIDs).
-		Updates(map[string]interface{}{
-			"name":             c.Name,
-			"department_id":    c.DepartmentID,
-			"team_id":          c.TeamID,
-			"experience_years": c.ExperienceYears,
-			"education_level":  c.EducationLevel,
-			"updated_at":       time.Now().UTC(),
+func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Candidate, p *access.Principal) error {
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Where("id = ?", c.ID)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Updates(map[string]interface{}{
+			"name":              c.Name,
+			"department_id":     c.DepartmentID,
+			"team_id":           c.TeamID,
+			"experience_years":  c.ExperienceYears,
+			"education_level":   c.EducationLevel,
+			"phone_enc":         c.PhoneEnc,
+			"id_number_enc":     c.IDNumberEnc,
+			"email_enc":         c.EmailEnc,
+			"pii_key_version":   c.PIIKeyVersion,
+			"updated_at":        time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return res.Error
@@ -106,10 +138,10 @@ func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Ca
 	return nil
 }
 
-func (r *RecruitmentRepository) SoftDeleteCandidate(ctx context.Context, id string, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		Delete(&model.Candidate{})
+func (r *RecruitmentRepository) SoftDeleteCandidate(ctx context.Context, id string, p *access.Principal) error {
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Delete(&model.Candidate{})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -119,47 +151,44 @@ func (r *RecruitmentRepository) SoftDeleteCandidate(ctx context.Context, id stri
 	return nil
 }
 
-func (r *RecruitmentRepository) ListPositions(ctx context.Context, institutionIDs []string, offset, limit int, orderClause string) ([]model.Position, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.Position{}).
-		Where("institution_id IN ?", institutionIDs)
+func (r *RecruitmentRepository) ListPositions(ctx context.Context, p *access.Principal, offset, limit int, orderClause string) ([]model.Position, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.Position{})
+	base = applyDataScope(base, p, "institution_id", "department_id", "team_id")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.Position
-	err := r.db.WithContext(ctx).
-		Where("institution_id IN ?", institutionIDs).
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
-		Find(&rows).Error
+	q := r.db.WithContext(ctx).Model(&model.Position{})
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.Order(orderClause).Offset(offset).Limit(limit).Find(&rows).Error
 	return rows, total, err
 }
 
-func (r *RecruitmentRepository) GetPosition(ctx context.Context, id string, institutionIDs []string) (*model.Position, error) {
-	var p model.Position
-	err := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		First(&p).Error
+func (r *RecruitmentRepository) GetPosition(ctx context.Context, id string, p *access.Principal) (*model.Position, error) {
+	var pos model.Position
+	q := r.db.WithContext(ctx).Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.First(&pos).Error
 	if err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return &pos, nil
 }
 
 func (r *RecruitmentRepository) CreatePosition(ctx context.Context, p *model.Position) error {
 	return r.db.WithContext(ctx).Create(p).Error
 }
 
-func (r *RecruitmentRepository) UpdatePosition(ctx context.Context, p *model.Position, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", p.ID, institutionIDs).
-		Updates(map[string]interface{}{
-			"title":         p.Title,
-			"description":   p.Description,
-			"status":        p.Status,
-			"department_id": p.DepartmentID,
-			"team_id":       p.TeamID,
+func (r *RecruitmentRepository) UpdatePosition(ctx context.Context, pos *model.Position, p *access.Principal) error {
+	q := r.db.WithContext(ctx).Model(&model.Position{}).Where("id = ?", pos.ID)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Updates(map[string]interface{}{
+			"title":         pos.Title,
+			"description":   pos.Description,
+			"status":        pos.Status,
+			"department_id": pos.DepartmentID,
+			"team_id":       pos.TeamID,
 			"updated_at":    time.Now().UTC(),
 		})
 	if res.Error != nil {
@@ -173,4 +202,324 @@ func (r *RecruitmentRepository) UpdatePosition(ctx context.Context, p *model.Pos
 
 func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+// --- Import batches ---
+
+func (r *RecruitmentRepository) CreateImportBatch(ctx context.Context, b *model.CandidateImportBatch) error {
+	return r.db.WithContext(ctx).Create(b).Error
+}
+
+func (r *RecruitmentRepository) GetImportBatch(ctx context.Context, id string, pr *access.Principal) (*model.CandidateImportBatch, error) {
+	var b model.CandidateImportBatch
+	q := r.db.WithContext(ctx).Where("id = ?", id)
+	q = applyInstitutionScope(q, pr, "institution_id")
+	err := q.First(&b).Error
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (r *RecruitmentRepository) UpdateImportBatchCommitted(ctx context.Context, id string, pr *access.Principal, validationJSON []byte, committedAt time.Time) error {
+	q := r.db.WithContext(ctx).Model(&model.CandidateImportBatch{}).
+		Where("id = ? AND status = ?", id, "pending")
+	q = applyInstitutionScope(q, pr, "institution_id")
+	res := q.Updates(map[string]interface{}{
+			"status":                 "committed",
+			"validation_report_json": validationJSON,
+			"committed_at":           committedAt,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// --- Merge history ---
+
+func (r *RecruitmentRepository) CreateMergeHistory(ctx context.Context, h *model.CandidateMergeHistory) error {
+	return r.db.WithContext(ctx).Create(h).Error
+}
+
+func (r *RecruitmentRepository) ListMergeHistory(ctx context.Context, pr *access.Principal, offset, limit int) ([]model.CandidateMergeHistory, int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.CandidateMergeHistory{}).
+		Joins("INNER JOIN candidates ON candidates.id = candidate_merge_history.base_candidate_id")
+	base = applyDataScope(base, pr, "candidates.institution_id", "candidates.department_id", "candidates.team_id")
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.CandidateMergeHistory
+	q := r.db.WithContext(ctx).Model(&model.CandidateMergeHistory{}).
+		Joins("INNER JOIN candidates ON candidates.id = candidate_merge_history.base_candidate_id")
+	q = applyDataScope(q, pr, "candidates.institution_id", "candidates.department_id", "candidates.team_id")
+	err := q.Order("candidate_merge_history.created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&rows).Error
+	return rows, total, err
+}
+
+// --- Match snapshots ---
+
+func (r *RecruitmentRepository) CreateMatchSnapshot(ctx context.Context, s *model.MatchScoreSnapshot) error {
+	return r.db.WithContext(ctx).Create(s).Error
+}
+
+// --- Position requirements ---
+
+func (r *RecruitmentRepository) ListPositionRequirements(ctx context.Context, positionID string) ([]model.PositionRequirement, error) {
+	var rows []model.PositionRequirement
+	err := r.db.WithContext(ctx).
+		Where("position_id = ?", positionID).
+		Order("skill_name").
+		Find(&rows).Error
+	return rows, err
+}
+
+// --- Duplicates (same normalized name within institution) ---
+
+type DuplicateNameGroup struct {
+	NameKey        string
+	InstitutionID  string
+	CandidateIDs   []string
+}
+
+func (r *RecruitmentRepository) ListDuplicateNameGroups(ctx context.Context, pr *access.Principal) ([]DuplicateNameGroup, error) {
+	scopeSQL, scopeArgs, ok := buildDataScopeExpr(pr, "institution_id", "department_id", "team_id")
+	if !ok {
+		return nil, nil
+	}
+	type row struct {
+		NameKey       string
+		InstitutionID string
+		IDsCSV        string `gorm:"column:ids_csv"`
+	}
+	var raw []row
+	query := `
+SELECT LOWER(TRIM(name)) AS name_key, institution_id,
+       GROUP_CONCAT(id ORDER BY created_at) AS ids_csv
+FROM candidates
+WHERE deleted_at IS NULL AND ` + scopeSQL + `
+GROUP BY LOWER(TRIM(name)), institution_id
+HAVING COUNT(*) > 1
+`
+	err := r.db.WithContext(ctx).Raw(query, scopeArgs...).Scan(&raw).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DuplicateNameGroup, 0, len(raw))
+	for _, r0 := range raw {
+		parts := strings.Split(r0.IDsCSV, ",")
+		ids := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				ids = append(ids, p)
+			}
+		}
+		if len(ids) < 2 {
+			continue
+		}
+		out = append(out, DuplicateNameGroup{
+			NameKey:       r0.NameKey,
+			InstitutionID: r0.InstitutionID,
+			CandidateIDs:  ids,
+		})
+	}
+	return out, nil
+}
+
+// ListCandidatesForSimilarity returns non-deleted candidates in scope (for recommendations).
+func (r *RecruitmentRepository) ListCandidatesForSimilarity(ctx context.Context, pr *access.Principal, excludeID string, limit int) ([]model.Candidate, error) {
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).
+		Preload("Skills").
+		Where("deleted_at IS NULL")
+	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
+	if excludeID != "" {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var rows []model.Candidate
+	err := q.Order("updated_at DESC").Limit(limit * 3).Find(&rows).Error
+	return rows, err
+}
+
+// ListPositionsForSimilarity returns positions in scope (for recommendations).
+func (r *RecruitmentRepository) ListPositionsForSimilarity(ctx context.Context, pr *access.Principal, excludeID string, limit int) ([]model.Position, error) {
+	q := r.db.WithContext(ctx).Model(&model.Position{})
+	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
+	if excludeID != "" {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var rows []model.Position
+	err := q.Order("updated_at DESC").Limit(limit * 3).Find(&rows).Error
+	return rows, err
+}
+
+// MergeIntoBase merges source candidates into base (soft-deletes sources) and writes merge history with snapshots.
+func (r *RecruitmentRepository) MergeIntoBase(ctx context.Context, baseID string, sourceIDs []string, pr *access.Principal, operatorUserID string, strategy string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var base model.Candidate
+		q := tx.Preload("Skills").Where("id = ?", baseID)
+		q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
+		if err := q.First(&base).Error; err != nil {
+			return err
+		}
+		tagMapBefore, err := r.TagsForCandidates(ctx, append(sourceIDs, baseID))
+		if err != nil {
+			return err
+		}
+		beforeSnap, err := json.Marshal(mergeSnapshot{
+			Name:            base.Name,
+			ExperienceYears: base.ExperienceYears,
+			EducationLevel:  base.EducationLevel,
+			SkillNames:      skillNamesFrom(&base),
+			Tags:            tagMapBefore[baseID],
+		})
+		if err != nil {
+			return err
+		}
+		var sources []model.Candidate
+		sq := tx.Preload("Skills").Where("id IN ?", sourceIDs)
+		sq = applyDataScope(sq, pr, "institution_id", "department_id", "team_id")
+		if err := sq.Find(&sources).Error; err != nil {
+			return err
+		}
+		if len(sources) != len(sourceIDs) {
+			return gorm.ErrRecordNotFound
+		}
+		for _, s := range sources {
+			if s.ID == baseID {
+				return errors.New("source equals base")
+			}
+			if s.InstitutionID != base.InstitutionID {
+				return errors.New("institution mismatch")
+			}
+		}
+
+		mergedSkills := make(map[string]struct{})
+		for _, sk := range base.Skills {
+			mergedSkills[sk.SkillName] = struct{}{}
+		}
+		for _, src := range sources {
+			for _, sk := range src.Skills {
+				mergedSkills[sk.SkillName] = struct{}{}
+			}
+		}
+		mergedTags := map[string]struct{}{}
+		for _, t := range tagMapBefore[baseID] {
+			mergedTags[t] = struct{}{}
+		}
+		for _, sid := range sourceIDs {
+			for _, t := range tagMapBefore[sid] {
+				mergedTags[t] = struct{}{}
+			}
+		}
+		var tags []string
+		for t := range mergedTags {
+			tags = append(tags, t)
+		}
+		sort.Strings(tags)
+
+		exp := base.ExperienceYears
+		edu := base.EducationLevel
+		for _, src := range sources {
+			if exp == nil && src.ExperienceYears != nil {
+				exp = src.ExperienceYears
+			}
+			if (edu == nil || *edu == "") && src.EducationLevel != nil && *src.EducationLevel != "" {
+				edu = src.EducationLevel
+			}
+		}
+
+		base.ExperienceYears = exp
+		base.EducationLevel = edu
+		now := time.Now().UTC()
+		base.UpdatedAt = now
+
+		uq := tx.Model(&model.Candidate{}).Where("id = ?", base.ID)
+		uq = applyDataScope(uq, pr, "institution_id", "department_id", "team_id")
+		if err := uq.Updates(map[string]interface{}{
+				"experience_years": base.ExperienceYears,
+				"education_level":  base.EducationLevel,
+				"updated_at":       now,
+			}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("candidate_id = ?", base.ID).Delete(&model.CandidateSkill{}).Error; err != nil {
+			return err
+		}
+		for name := range mergedSkills {
+			if name == "" {
+				continue
+			}
+			row := model.CandidateSkill{
+				ID:          uuid.NewString(),
+				CandidateID: base.ID,
+				SkillName:   name,
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Where("candidate_id = ?", base.ID).Delete(&model.CandidateTag{}).Error; err != nil {
+			return err
+		}
+		for _, t := range tags {
+			if t == "" {
+				continue
+			}
+			if err := tx.Create(&model.CandidateTag{CandidateID: base.ID, Tag: t}).Error; err != nil {
+				return err
+			}
+		}
+
+		for _, sid := range sourceIDs {
+			dq := tx.Model(&model.Candidate{}).Where("id = ?", sid)
+			dq = applyDataScope(dq, pr, "institution_id", "department_id", "team_id")
+			res := dq.Delete(&model.Candidate{})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return gorm.ErrRecordNotFound
+			}
+		}
+
+		afterSnap, err := json.Marshal(mergeSnapshot{
+			Name:            base.Name,
+			ExperienceYears: base.ExperienceYears,
+			EducationLevel:  base.EducationLevel,
+			SkillNames:      sortedSkillNamesFromMap(mergedSkills),
+			Tags:            tags,
+		})
+		if err != nil {
+			return err
+		}
+		srcJSON, err := json.Marshal(sourceIDs)
+		if err != nil {
+			return err
+		}
+		mergedFields, err := json.Marshal(map[string]any{"strategy": strategy})
+		if err != nil {
+			return err
+		}
+		h := &model.CandidateMergeHistory{
+			ID:                     uuid.NewString(),
+			BaseCandidateID:        baseID,
+			SourceCandidateIDsJSON: srcJSON,
+			MergedFieldsJSON:       mergedFields,
+			BeforeSnapshotJSON:     beforeSnap,
+			AfterSnapshotJSON:      afterSnap,
+			OperatorUserID:         operatorUserID,
+			CreatedAt:              now,
+		}
+		return tx.Create(h).Error
+	})
 }

@@ -96,7 +96,7 @@ func (h *AuditHandler) RequestExport(c *gin.Context) {
 		TargetType: body.TargetType,
 		From:       body.From,
 		To:         body.To,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrAuditExportValidation) {
 		response.Error(c, http.StatusBadRequest, "EXPORT_VALIDATION_FAILED", "invalid export filter")
 		return

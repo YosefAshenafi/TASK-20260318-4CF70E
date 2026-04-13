@@ -4,7 +4,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
-import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { useCreateScopeContext } from '@/composables/useDataScope'
 import { positionStatusLabel } from '@/utils/display'
 
 type PositionRow = {
@@ -22,6 +22,8 @@ type ListResp = {
   page: number
   pageSize: number
 }
+
+const { requireContext } = useCreateScopeContext()
 
 const loading = ref(false)
 const rows = ref<PositionRow[]>([])
@@ -73,8 +75,17 @@ async function submitCreate() {
   }
   dialogSaving.value = true
   try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
     await apiPost<PositionRow>('/api/v1/recruitment/positions', {
-      institutionId: DEV_INSTITUTION_ID,
+      institutionId: scope.institutionId,
+      departmentId: scope.departmentId,
+      teamId: scope.teamId,
       title: formTitle.value.trim(),
       description: formDesc.value.trim() || undefined,
       status: formStatus.value,

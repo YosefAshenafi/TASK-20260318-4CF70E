@@ -64,3 +64,41 @@ func (p *Principal) AllowedInstitutionIDs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// RowVisible reports whether a row with the given institution and org assignment is visible (design §10.2).
+func (p *Principal) RowVisible(institutionID string, departmentID, teamID *string) bool {
+	if p == nil || institutionID == "" {
+		return false
+	}
+	for _, s := range p.Scopes {
+		if scopeRowVisible(s, institutionID, departmentID, teamID) {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeRowVisible(s Scope, inst string, deptID, teamID *string) bool {
+	if s.InstitutionID != inst {
+		return false
+	}
+	if s.DepartmentID == nil && s.TeamID == nil {
+		return true
+	}
+	if s.TeamID != nil {
+		if s.DepartmentID != nil {
+			if deptID == nil || teamID == nil {
+				return false
+			}
+			return *deptID == *s.DepartmentID && *teamID == *s.TeamID
+		}
+		if teamID == nil {
+			return false
+		}
+		return *teamID == *s.TeamID
+	}
+	if deptID == nil {
+		return false
+	}
+	return *deptID == *s.DepartmentID
+}

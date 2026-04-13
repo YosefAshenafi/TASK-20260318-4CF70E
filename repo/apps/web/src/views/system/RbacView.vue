@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
-import { DEV_DEPARTMENT_ID, DEV_INSTITUTION_ID, DEV_TEAM_ID } from '@/config/devSeed'
+import { useCreateScopeContext } from '@/composables/useDataScope'
 import { humanizeScopeKeyLabel, humanizeTechnicalLabel } from '@/utils/display'
 
 type UserRow = {
@@ -70,6 +70,8 @@ function scopeOptionLabel(s: ScopeRow): string {
   return `${humanizeScopeKeyLabel(s.scopeKey)} (${s.institutionId.slice(0, 8)}…)`
 }
 
+const { context: scopeContext } = useCreateScopeContext()
+
 const tab = ref<'users' | 'roles' | 'scopes'>('users')
 
 const users = ref<UserRow[]>([])
@@ -122,7 +124,7 @@ const newRoleDescription = ref('')
 const addScopeVisible = ref(false)
 const addScopeSaving = ref(false)
 const newScopeKey = ref('')
-const newScopeInstitutionId = ref(DEV_INSTITUTION_ID)
+const newScopeInstitutionId = ref('')
 const newScopeDepartmentId = ref('')
 const newScopeTeamId = ref('')
 
@@ -350,7 +352,7 @@ async function saveAddRole() {
 
 function openAddScope() {
   newScopeKey.value = ''
-  newScopeInstitutionId.value = DEV_INSTITUTION_ID
+  newScopeInstitutionId.value = scopeContext.value?.institutionId ?? ''
   newScopeDepartmentId.value = ''
   newScopeTeamId.value = ''
   addScopeVisible.value = true
@@ -495,9 +497,8 @@ onMounted(async () => {
           <div class="users-toolbar">
             <el-button type="primary" @click="openAddScope">Add data scope</el-button>
             <span class="muted small">
-              Institution-wide, or limited to a department or team. Sample identifiers —
-              <code class="mono">dept</code> {{ DEV_DEPARTMENT_ID.slice(0, 8) }}…,
-              <code class="mono">team</code> {{ DEV_TEAM_ID.slice(0, 8) }}…
+              Institution-wide, or limited to a department or team. Use UUIDs from your organization master data. The
+              institution field defaults from your assigned data scopes when you open this dialog.
             </span>
           </div>
           <el-table v-loading="loadingScopes" :data="scopes" stripe empty-text="No scopes">
@@ -613,10 +614,10 @@ onMounted(async () => {
           <el-input v-model="newScopeInstitutionId" class="mono" />
         </el-form-item>
         <el-form-item label="Department id (optional)">
-          <el-input v-model="newScopeDepartmentId" :placeholder="DEV_DEPARTMENT_ID" class="mono" clearable />
+          <el-input v-model="newScopeDepartmentId" placeholder="Department UUID (optional)" class="mono" clearable />
         </el-form-item>
         <el-form-item label="Team id (optional; must match department)">
-          <el-input v-model="newScopeTeamId" :placeholder="DEV_TEAM_ID" class="mono" clearable />
+          <el-input v-model="newScopeTeamId" placeholder="Team UUID (optional)" class="mono" clearable />
         </el-form-item>
       </el-form>
       <p class="muted small">Leave department and team empty for institution-wide scope.</p>

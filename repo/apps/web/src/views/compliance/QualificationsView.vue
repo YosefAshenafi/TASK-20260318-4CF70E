@@ -4,7 +4,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
-import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { useCreateScopeContext } from '@/composables/useDataScope'
 import { qualificationStatusLabel } from '@/utils/display'
 import { useAuthStore } from '@/stores/auth'
 
@@ -27,6 +27,7 @@ type ListResp = {
 }
 
 const auth = useAuthStore()
+const { requireContext } = useCreateScopeContext()
 const canManage = () => auth.hasPermission('compliance.manage')
 
 const loading = ref(false)
@@ -94,8 +95,15 @@ async function submitCreate() {
   }
   dialogSaving.value = true
   try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
     await apiPost<QualRow>('/api/v1/compliance/qualifications', {
-      institutionId: DEV_INSTITUTION_ID,
+      institutionId: scope.institutionId,
       clientId: formClient.value.trim(),
       displayName: formName.value.trim(),
       expiresOn: formExpires.value || undefined,

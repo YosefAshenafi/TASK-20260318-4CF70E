@@ -120,7 +120,7 @@ func (h *ComplianceHandler) CreateQualification(c *gin.Context) {
 		DisplayName:   body.DisplayName,
 		ExpiresOn:     body.ExpiresOn,
 		Metadata:      body.Metadata,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -156,7 +156,7 @@ func (h *ComplianceHandler) PatchQualification(c *gin.Context) {
 		ExpiresOn:   body.ExpiresOn,
 		Metadata:    body.Metadata,
 		Status:      body.Status,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -179,7 +179,7 @@ func (h *ComplianceHandler) ActivateQualification(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	dto, err := h.svc.ActivateQualification(c.Request.Context(), pr, id)
+	dto, err := h.svc.ActivateQualification(c.Request.Context(), pr, id, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -202,7 +202,7 @@ func (h *ComplianceHandler) DeactivateQualification(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	dto, err := h.svc.DeactivateQualification(c.Request.Context(), pr, id)
+	dto, err := h.svc.DeactivateQualification(c.Request.Context(), pr, id, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -314,7 +314,7 @@ func (h *ComplianceHandler) CreateRestriction(c *gin.Context) {
 		MedicationID:  body.MedicationID,
 		Rule:          body.Rule,
 		IsActive:      active,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return
@@ -350,7 +350,7 @@ func (h *ComplianceHandler) PatchRestriction(c *gin.Context) {
 		MedicationID: body.MedicationID,
 		Rule:         body.Rule,
 		IsActive:     body.IsActive,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return

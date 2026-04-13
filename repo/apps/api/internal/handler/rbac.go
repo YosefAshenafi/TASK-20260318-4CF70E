@@ -68,7 +68,7 @@ func (h *RbacHandler) CreateUser(c *gin.Context) {
 		DisplayName: body.DisplayName,
 		IsActive:    active,
 		RoleIDs:     body.RoleIDs,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid user fields or username taken")
 		return
@@ -125,7 +125,7 @@ func (h *RbacHandler) PatchUser(c *gin.Context) {
 		IsActive:    body.IsActive,
 		Password:    body.Password,
 		RoleIDs:     body.RoleIDs,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid user fields")
 		return
@@ -161,7 +161,7 @@ func (h *RbacHandler) SetUserScopes(c *gin.Context) {
 	if body.ScopeIDs == nil {
 		body.ScopeIDs = []string{}
 	}
-	err := h.svc.SetUserScopes(c.Request.Context(), id, body.ScopeIDs)
+	err := h.svc.SetUserScopes(c.Request.Context(), id, body.ScopeIDs, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "unknown scope id")
 		return
@@ -199,7 +199,7 @@ func (h *RbacHandler) CreateRole(c *gin.Context) {
 		Slug:        body.Slug,
 		Name:        body.Name,
 		Description: body.Description,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid role fields or duplicate slug")
 		return
@@ -282,7 +282,7 @@ func (h *RbacHandler) PatchRole(c *gin.Context) {
 	dto, err := h.svc.UpdateRole(c.Request.Context(), id, service.UpdateRoleInput{
 		Name:        body.Name,
 		Description: body.Description,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid role fields")
 		return
@@ -318,7 +318,7 @@ func (h *RbacHandler) SetRolePermissions(c *gin.Context) {
 		body.PermissionIDs = []string{}
 	}
 	id := c.Param("id")
-	if err := h.svc.SetRolePermissions(c.Request.Context(), id, body.PermissionIDs); err != nil {
+	if err := h.svc.SetRolePermissions(c.Request.Context(), id, body.PermissionIDs, auditRequestMeta(c)); err != nil {
 		if repository.IsNotFound(err) {
 			response.Error(c, http.StatusNotFound, "ROLE_NOT_FOUND", "role not found")
 			return
@@ -357,7 +357,7 @@ func (h *RbacHandler) CreateScope(c *gin.Context) {
 		InstitutionID: body.InstitutionID,
 		DepartmentID:  body.DepartmentID,
 		TeamID:        body.TeamID,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrRbacValidation) {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid scope fields or duplicate scope key")
 		return

@@ -52,3 +52,8 @@ func (r *AuditRepository) ListLogs(ctx context.Context, offset, limit int, order
 func (r *AuditRepository) CreateExport(ctx context.Context, e *model.AuditExport) error {
 	return r.db.WithContext(ctx).Create(e).Error
 }
+
+// CreateAuditLog appends one immutable audit row (append-only store).
+func (r *AuditRepository) CreateAuditLog(ctx context.Context, a *model.AuditLog) error {
+	return r.db.WithContext(ctx).Create(a).Error
+}

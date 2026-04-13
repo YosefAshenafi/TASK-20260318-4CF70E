@@ -3,44 +3,67 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"pharmaops/api/internal/access"
+	cryptopii "pharmaops/api/internal/crypto/pii"
 	"pharmaops/api/internal/model"
 	"pharmaops/api/internal/repository"
 )
 
-// ErrForbiddenScope means the principal has no institution scope for this operation.
+// ErrForbiddenScope means the principal has no usable data scope for this operation.
 var ErrForbiddenScope = errors.New("forbidden scope")
 
+func requireScope(p *access.Principal) error {
+	if p == nil || len(p.Scopes) == 0 {
+		return ErrForbiddenScope
+	}
+	return nil
+}
+
+// ErrPIINotConfigured means PII_AES_KEY_HEX is missing but plaintext PII was submitted.
+var ErrPIINotConfigured = errors.New("PII encryption key not configured")
+
+const permissionRecruitmentViewPII = "recruitment.view_pii"
+
 type RecruitmentService struct {
-	repo *repository.RecruitmentRepository
+	repo      *repository.RecruitmentRepository
+	piiCipher *cryptopii.Cipher
+	audit     *AuditService
 }
 
-func NewRecruitmentService(repo *repository.RecruitmentRepository) *RecruitmentService {
-	return &RecruitmentService{repo: repo}
+func NewRecruitmentService(repo *repository.RecruitmentRepository, piiCipher *cryptopii.Cipher, audit *AuditService) *RecruitmentService {
+	return &RecruitmentService{repo: repo, piiCipher: piiCipher, audit: audit}
 }
 
-func (s *RecruitmentService) scopeInstitutions(p *access.Principal) ([]string, error) {
-	if p == nil {
-		return nil, ErrForbiddenScope
+// GetCandidateOpts carries request metadata for audit logging when full PII is returned.
+type GetCandidateOpts struct {
+	OperatorUserID string
+	RequestID      string
+	RequestSource  *string
+}
+
+// AuditMeta returns operator/request correlation for mutation audit rows (design §17).
+func (o GetCandidateOpts) AuditMeta() AuditRequestMeta {
+	return AuditRequestMeta{
+		OperatorUserID: o.OperatorUserID,
+		RequestID:      o.RequestID,
+		RequestSource:  o.RequestSource,
 	}
-	ids := p.AllowedInstitutionIDs()
-	if len(ids) == 0 {
-		return nil, ErrForbiddenScope
-	}
-	return ids, nil
 }
 
-// CandidateDTO matches api-spec list/detail shape (masked PII).
+// CandidateDTO matches api-spec list/detail shape (masked PII; full fields when recruitment.view_pii).
 type CandidateDTO struct {
 	ID               string         `json:"id"`
 	Name             string         `json:"name"`
 	PhoneMasked      string         `json:"phoneMasked"`
 	IDNumberMasked   string         `json:"idNumberMasked"`
 	Email            string         `json:"email,omitempty"`
+	Phone            *string        `json:"phone,omitempty"`
+	IDNumber         *string        `json:"idNumber,omitempty"`
 	Skills           []string       `json:"skills"`
 	ExperienceYears  *int           `json:"experienceYears,omitempty"`
 	EducationLevel   *string        `json:"educationLevel,omitempty"`
@@ -66,14 +89,76 @@ type PositionDTO struct {
 	UpdatedAt     string  `json:"updatedAt"`
 }
 
-func maskPII(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	return "••••••••"
+func (s *RecruitmentService) revealFullPII(p *access.Principal) bool {
+	return p != nil && p.Has(permissionRecruitmentViewPII)
 }
 
-func toCandidateDTO(c *model.Candidate, tags []string) CandidateDTO {
+func disclosedPIIFieldNames(d *CandidateDTO) []string {
+	if d == nil {
+		return nil
+	}
+	var fields []string
+	if d.Phone != nil && *d.Phone != "" {
+		fields = append(fields, "phone")
+	}
+	if d.IDNumber != nil && *d.IDNumber != "" {
+		fields = append(fields, "idNumber")
+	}
+	if d.Email != "" {
+		fields = append(fields, "email")
+	}
+	return fields
+}
+
+// maybeAuditPIIRead appends an audit row when full PII was included in the response. Logging failure is ignored (best-effort).
+func (s *RecruitmentService) maybeAuditPIIRead(ctx context.Context, p *access.Principal, candidateID string, dto *CandidateDTO, opts GetCandidateOpts) {
+	if s.audit == nil || dto == nil || p == nil || !s.revealFullPII(p) {
+		return
+	}
+	if opts.OperatorUserID == "" {
+		return
+	}
+	fields := disclosedPIIFieldNames(dto)
+	if len(fields) == 0 {
+		return
+	}
+	reqID := opts.RequestID
+	_ = s.audit.LogCandidatePIIRead(ctx, opts.OperatorUserID, candidateID, reqID, opts.RequestSource, fields)
+}
+
+func (s *RecruitmentService) decryptPIIField(blob []byte) (plain string, ok bool) {
+	if len(blob) == 0 {
+		return "", true
+	}
+	if s.piiCipher == nil || !s.piiCipher.Valid() {
+		return "", false
+	}
+	out, err := s.piiCipher.DecryptString(blob)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+func (s *RecruitmentService) sealPII(plain string) ([]byte, error) {
+	t := strings.TrimSpace(plain)
+	if t == "" {
+		return nil, nil
+	}
+	if s.piiCipher == nil || !s.piiCipher.Valid() {
+		return nil, ErrPIINotConfigured
+	}
+	return s.piiCipher.EncryptString(t)
+}
+
+func (s *RecruitmentService) encryptOptional(in *string) ([]byte, error) {
+	if in == nil {
+		return nil, nil
+	}
+	return s.sealPII(*in)
+}
+
+func (s *RecruitmentService) candidateDTO(c *model.Candidate, tags []string, reveal bool) CandidateDTO {
 	skills := make([]string, 0, len(c.Skills))
 	for _, sk := range c.Skills {
 		skills = append(skills, sk.SkillName)
@@ -81,12 +166,41 @@ func toCandidateDTO(c *model.Candidate, tags []string) CandidateDTO {
 	if tags == nil {
 		tags = []string{}
 	}
-	return CandidateDTO{
+
+	phonePlain, phoneOK := s.decryptPIIField(c.PhoneEnc)
+	idPlain, idOK := s.decryptPIIField(c.IDNumberEnc)
+	emailPlain, emailOK := s.decryptPIIField(c.EmailEnc)
+
+	phoneMasked := cryptopii.PartialMaskPhone(phonePlain)
+	if !phoneOK && len(c.PhoneEnc) > 0 {
+		phoneMasked = "••••••••"
+	}
+	idMasked := cryptopii.PartialMaskID(idPlain)
+	if !idOK && len(c.IDNumberEnc) > 0 {
+		idMasked = "••••••••"
+	}
+
+	var emailOut string
+	if reveal {
+		if emailOK {
+			emailOut = emailPlain
+		} else if len(c.EmailEnc) > 0 {
+			emailOut = "••••••••"
+		}
+	} else {
+		if emailOK {
+			emailOut = cryptopii.PartialMaskEmail(emailPlain)
+		} else if len(c.EmailEnc) > 0 {
+			emailOut = "••••••••"
+		}
+	}
+
+	dto := CandidateDTO{
 		ID:              c.ID,
 		Name:            c.Name,
-		PhoneMasked:     maskPII(c.PhoneEnc),
-		IDNumberMasked:  maskPII(c.IDNumberEnc),
-		Email:           maskPII(c.EmailEnc),
+		PhoneMasked:     phoneMasked,
+		IDNumberMasked:  idMasked,
+		Email:           emailOut,
 		Skills:          skills,
 		ExperienceYears: c.ExperienceYears,
 		EducationLevel:  c.EducationLevel,
@@ -98,6 +212,17 @@ func toCandidateDTO(c *model.Candidate, tags []string) CandidateDTO {
 		CreatedAt:       c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:       c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+	if reveal {
+		if phoneOK && phonePlain != "" {
+			p := phonePlain
+			dto.Phone = &p
+		}
+		if idOK && idPlain != "" {
+			x := idPlain
+			dto.IDNumber = &x
+		}
+	}
+	return dto
 }
 
 func toPositionDTO(p *model.Position) PositionDTO {
@@ -142,11 +267,10 @@ func positionOrder(sortBy, sortOrder string) string {
 
 // ListCandidates returns paginated candidates in scope.
 func (s *RecruitmentService) ListCandidates(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]CandidateDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListCandidates(ctx, instIDs, offset, pageSize, candidateOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListCandidates(ctx, p, offset, pageSize, candidateOrder(sortBy, sortOrder))
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -160,18 +284,17 @@ func (s *RecruitmentService) ListCandidates(ctx context.Context, p *access.Princ
 	}
 	out := make([]CandidateDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, toCandidateDTO(&r, tagMap[r.ID]))
+		out = append(out, s.candidateDTO(&r, tagMap[r.ID], false))
 	}
 	return out, total, page, pageSize, nil
 }
 
-// GetCandidate returns one candidate if in scope.
-func (s *RecruitmentService) GetCandidate(ctx context.Context, p *access.Principal, id string) (*CandidateDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+// GetCandidate returns one candidate if in scope. Full plaintext PII is included only when the principal has recruitment.view_pii.
+func (s *RecruitmentService) GetCandidate(ctx context.Context, p *access.Principal, id string, opts GetCandidateOpts) (*CandidateDTO, error) {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCandidate(ctx, id, instIDs)
+	c, err := s.repo.GetCandidate(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +302,8 @@ func (s *RecruitmentService) GetCandidate(ctx context.Context, p *access.Princip
 	if err != nil {
 		return nil, err
 	}
-	dto := toCandidateDTO(c, tagMap[id])
+	dto := s.candidateDTO(c, tagMap[id], s.revealFullPII(p))
+	s.maybeAuditPIIRead(ctx, p, id, &dto, opts)
 	return &dto, nil
 }
 
@@ -189,15 +313,33 @@ type CreateCandidateInput struct {
 	InstitutionID   string
 	DepartmentID    *string
 	TeamID          *string
+	Phone           *string
+	IDNumber        *string
+	Email           *string
 	ExperienceYears *int
 	EducationLevel  *string
 	Skills          []string
 	Tags            []string
 }
 
-func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Principal, in CreateCandidateInput) (*CandidateDTO, error) {
-	if !p.AllowsInstitution(in.InstitutionID) {
+func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Principal, in CreateCandidateInput, opts GetCandidateOpts) (*CandidateDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	if !p.RowVisible(in.InstitutionID, in.DepartmentID, in.TeamID) {
 		return nil, ErrForbiddenScope
+	}
+	phoneEnc, err := s.encryptOptional(in.Phone)
+	if err != nil {
+		return nil, err
+	}
+	idEnc, err := s.encryptOptional(in.IDNumber)
+	if err != nil {
+		return nil, err
+	}
+	emailEnc, err := s.encryptOptional(in.Email)
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	c := &model.Candidate{
@@ -206,6 +348,10 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 		DepartmentID:    in.DepartmentID,
 		TeamID:          in.TeamID,
 		Name:            in.Name,
+		PhoneEnc:        phoneEnc,
+		IDNumberEnc:     idEnc,
+		EmailEnc:        emailEnc,
+		PIIKeyVersion:   1,
 		ExperienceYears: in.ExperienceYears,
 		EducationLevel:  in.EducationLevel,
 		CreatedAt:       now,
@@ -241,7 +387,7 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	if err := s.repo.CreateCandidate(ctx, c, skills, tags); err != nil {
 		return nil, err
 	}
-	loaded, err := s.repo.GetCandidate(ctx, c.ID, []string{in.InstitutionID})
+	loaded, err := s.repo.GetCandidate(ctx, c.ID, p)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +395,16 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	if err != nil {
 		return nil, err
 	}
-	dto := toCandidateDTO(loaded, tagMap[c.ID])
+	dto := s.candidateDTO(loaded, tagMap[c.ID], s.revealFullPII(p))
+	s.maybeAuditPIIRead(ctx, p, c.ID, &dto, opts)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "recruitment",
+		Operation:  "candidate.create",
+		TargetType: "candidate",
+		TargetID:   c.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       opts.AuditMeta(),
+	})
 	return &dto, nil
 }
 
@@ -258,19 +413,23 @@ type UpdateCandidateInput struct {
 	Name            *string
 	DepartmentID    *string
 	TeamID          *string
+	Phone           *string
+	IDNumber        *string
+	Email           *string
 	ExperienceYears *int
 	EducationLevel  *string
 }
 
-func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Principal, id string, in UpdateCandidateInput) (*CandidateDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Principal, id string, in UpdateCandidateInput, opts GetCandidateOpts) (*CandidateDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetCandidate(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCandidate(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeTags, _ := s.repo.TagsForCandidates(ctx, []string{id})
+	beforeMap := DTOToAuditMap(s.candidateDTO(c, beforeTags[id], false))
 	if in.Name != nil {
 		c.Name = *in.Name
 	}
@@ -280,33 +439,88 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 	if in.TeamID != nil {
 		c.TeamID = in.TeamID
 	}
+	if in.Phone != nil {
+		b, err := s.sealPII(*in.Phone)
+		if err != nil {
+			return nil, err
+		}
+		c.PhoneEnc = b
+	}
+	if in.IDNumber != nil {
+		b, err := s.sealPII(*in.IDNumber)
+		if err != nil {
+			return nil, err
+		}
+		c.IDNumberEnc = b
+	}
+	if in.Email != nil {
+		b, err := s.sealPII(*in.Email)
+		if err != nil {
+			return nil, err
+		}
+		c.EmailEnc = b
+	}
 	if in.ExperienceYears != nil {
 		c.ExperienceYears = in.ExperienceYears
 	}
 	if in.EducationLevel != nil {
 		c.EducationLevel = in.EducationLevel
 	}
-	if err := s.repo.UpdateCandidate(ctx, c, instIDs); err != nil {
+	if !p.RowVisible(c.InstitutionID, c.DepartmentID, c.TeamID) {
+		return nil, ErrForbiddenScope
+	}
+	if err := s.repo.UpdateCandidate(ctx, c, p); err != nil {
 		return nil, err
 	}
-	return s.GetCandidate(ctx, p, id)
+	afterC, err := s.repo.GetCandidate(ctx, id, p)
+	if err != nil {
+		return nil, err
+	}
+	afterTags, _ := s.repo.TagsForCandidates(ctx, []string{id})
+	afterMap := DTOToAuditMap(s.candidateDTO(afterC, afterTags[id], false))
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "recruitment",
+		Operation:  "candidate.update",
+		TargetType: "candidate",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      afterMap,
+		Meta:       opts.AuditMeta(),
+	})
+	return s.GetCandidate(ctx, p, id, opts)
 }
 
-func (s *RecruitmentService) DeleteCandidate(ctx context.Context, p *access.Principal, id string) error {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *RecruitmentService) DeleteCandidate(ctx context.Context, p *access.Principal, id string, meta AuditRequestMeta) error {
+	if err := requireScope(p); err != nil {
+		return err
+	}
+	beforeC, err := s.repo.GetCandidate(ctx, id, p)
 	if err != nil {
 		return err
 	}
-	return s.repo.SoftDeleteCandidate(ctx, id, instIDs)
+	tags, _ := s.repo.TagsForCandidates(ctx, []string{id})
+	beforeMap := DTOToAuditMap(s.candidateDTO(beforeC, tags[id], false))
+	if err := s.repo.SoftDeleteCandidate(ctx, id, p); err != nil {
+		return err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "recruitment",
+		Operation:  "candidate.delete",
+		TargetType: "candidate",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      map[string]any{"deleted": true},
+		Meta:       meta,
+	})
+	return nil
 }
 
 // ListPositions returns paginated positions in scope.
 func (s *RecruitmentService) ListPositions(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]PositionDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListPositions(ctx, instIDs, offset, pageSize, positionOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListPositions(ctx, p, offset, pageSize, positionOrder(sortBy, sortOrder))
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -318,11 +532,10 @@ func (s *RecruitmentService) ListPositions(ctx context.Context, p *access.Princi
 }
 
 func (s *RecruitmentService) GetPosition(ctx context.Context, p *access.Principal, id string) (*PositionDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	pos, err := s.repo.GetPosition(ctx, id, instIDs)
+	pos, err := s.repo.GetPosition(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
@@ -340,8 +553,11 @@ type CreatePositionInput struct {
 	TeamID        *string
 }
 
-func (s *RecruitmentService) CreatePosition(ctx context.Context, p *access.Principal, in CreatePositionInput) (*PositionDTO, error) {
-	if !p.AllowsInstitution(in.InstitutionID) {
+func (s *RecruitmentService) CreatePosition(ctx context.Context, p *access.Principal, in CreatePositionInput, meta AuditRequestMeta) (*PositionDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	if !p.RowVisible(in.InstitutionID, in.DepartmentID, in.TeamID) {
 		return nil, ErrForbiddenScope
 	}
 	status := in.Status
@@ -364,6 +580,14 @@ func (s *RecruitmentService) CreatePosition(ctx context.Context, p *access.Princ
 		return nil, err
 	}
 	dto := toPositionDTO(pos)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "recruitment",
+		Operation:  "position.create",
+		TargetType: "position",
+		TargetID:   pos.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -376,15 +600,15 @@ type UpdatePositionInput struct {
 	TeamID      *string
 }
 
-func (s *RecruitmentService) UpdatePosition(ctx context.Context, p *access.Principal, id string, in UpdatePositionInput) (*PositionDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *RecruitmentService) UpdatePosition(ctx context.Context, p *access.Principal, id string, in UpdatePositionInput, meta AuditRequestMeta) (*PositionDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	pos, err := s.repo.GetPosition(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	pos, err := s.repo.GetPosition(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeMap := DTOToAuditMap(toPositionDTO(pos))
 	if in.Title != nil {
 		pos.Title = *in.Title
 	}
@@ -400,8 +624,25 @@ func (s *RecruitmentService) UpdatePosition(ctx context.Context, p *access.Princ
 	if in.TeamID != nil {
 		pos.TeamID = in.TeamID
 	}
-	if err := s.repo.UpdatePosition(ctx, pos, instIDs); err != nil {
+	if !p.RowVisible(pos.InstitutionID, pos.DepartmentID, pos.TeamID) {
+		return nil, ErrForbiddenScope
+	}
+	if err := s.repo.UpdatePosition(ctx, pos, p); err != nil {
 		return nil, err
 	}
+	loaded, err := s.repo.GetPosition(ctx, id, p)
+	if err != nil {
+		return nil, err
+	}
+	afterMap := DTOToAuditMap(toPositionDTO(loaded))
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "recruitment",
+		Operation:  "position.update",
+		TargetType: "position",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      afterMap,
+		Meta:       meta,
+	})
 	return s.GetPosition(ctx, p, id)
 }

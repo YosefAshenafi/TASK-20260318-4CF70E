@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,8 @@ type Config struct {
 	SessionTTL       time.Duration
 	Environment      string
 	FileStorageRoot  string
+	// PIIAESKeyHex is 64 hex chars (32 bytes) for AES-256 candidate PII at rest (PII_AES_KEY_HEX).
+	PIIAESKeyHex string
 }
 
 func Load() Config {
@@ -37,5 +40,6 @@ func Load() Config {
 		SessionTTL:      8 * time.Hour,
 		Environment:     env,
 		FileStorageRoot: root,
+		PIIAESKeyHex:    strings.TrimSpace(os.Getenv("PII_AES_KEY_HEX")),
 	}
 }

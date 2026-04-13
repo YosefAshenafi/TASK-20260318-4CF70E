@@ -54,11 +54,12 @@ type StatusTransitionDTO struct {
 }
 
 type CaseService struct {
-	repo *repository.CaseRepository
+	repo  *repository.CaseRepository
+	audit *AuditService
 }
 
-func NewCaseService(repo *repository.CaseRepository) *CaseService {
-	return &CaseService{repo: repo}
+func NewCaseService(repo *repository.CaseRepository, audit *AuditService) *CaseService {
+	return &CaseService{repo: repo, audit: audit}
 }
 
 func duplicateContentHash(institutionID, caseType, title, description, reportedAt string) string {
@@ -98,17 +99,6 @@ func caseOrder(sortBy, sortOrder string) string {
 	return col + " " + order
 }
 
-func (s *CaseService) scopeInstitutions(p *access.Principal) ([]string, error) {
-	if p == nil {
-		return nil, ErrForbiddenScope
-	}
-	ids := p.AllowedInstitutionIDs()
-	if len(ids) == 0 {
-		return nil, ErrForbiddenScope
-	}
-	return ids, nil
-}
-
 // CreateCaseInput for POST /cases.
 type CreateCaseInput struct {
 	InstitutionID string
@@ -120,8 +110,11 @@ type CreateCaseInput struct {
 	ReportedAt    time.Time
 }
 
-func (s *CaseService) CreateCase(ctx context.Context, p *access.Principal, in CreateCaseInput) (*CaseDTO, error) {
-	if !p.AllowsInstitution(in.InstitutionID) {
+func (s *CaseService) CreateCase(ctx context.Context, p *access.Principal, in CreateCaseInput, meta AuditRequestMeta) (*CaseDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	if !p.RowVisible(in.InstitutionID, in.DepartmentID, in.TeamID) {
 		return nil, ErrForbiddenScope
 	}
 	in.Title = strings.TrimSpace(in.Title)
@@ -144,9 +137,19 @@ func (s *CaseService) CreateCase(ctx context.Context, p *access.Principal, in Cr
 	var created *model.CaseRecord
 	err = s.repo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var n int64
-		if err := tx.Model(&model.CaseRecord{}).
-			Where("institution_id = ? AND duplicate_guard_hash = ? AND created_at >= ?", in.InstitutionID, h, since).
-			Count(&n).Error; err != nil {
+		dupQ := tx.Model(&model.CaseRecord{}).
+			Where("institution_id = ? AND duplicate_guard_hash = ? AND created_at >= ?", in.InstitutionID, h, since)
+		if in.DepartmentID != nil {
+			dupQ = dupQ.Where("department_id = ?", *in.DepartmentID)
+		} else {
+			dupQ = dupQ.Where("department_id IS NULL")
+		}
+		if in.TeamID != nil {
+			dupQ = dupQ.Where("team_id = ?", *in.TeamID)
+		} else {
+			dupQ = dupQ.Where("team_id IS NULL")
+		}
+		if err := dupQ.Count(&n).Error; err != nil {
 			return err
 		}
 		if n > 0 {
@@ -187,6 +190,14 @@ func (s *CaseService) CreateCase(ctx context.Context, p *access.Principal, in Cr
 		return nil, err
 	}
 	dto := toCaseDTO(created)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "cases",
+		Operation:  "case.create",
+		TargetType: "case",
+		TargetID:   created.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -196,11 +207,10 @@ func strPtr(s string) *string { return &s }
 var ErrCaseMandatoryFields = errors.New("case mandatory fields missing")
 
 func (s *CaseService) ListCases(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder, search, status string) ([]CaseDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListCases(ctx, instIDs, offset, pageSize, caseOrder(sortBy, sortOrder), search, status)
+	rows, total, err := s.repo.ListCases(ctx, p, offset, pageSize, caseOrder(sortBy, sortOrder), search, status)
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -212,11 +222,10 @@ func (s *CaseService) ListCases(ctx context.Context, p *access.Principal, page, 
 }
 
 func (s *CaseService) GetCase(ctx context.Context, p *access.Principal, id string) (*CaseDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCase(ctx, id, instIDs)
+	c, err := s.repo.GetCase(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
@@ -232,15 +241,16 @@ type UpdateCaseInput struct {
 	TeamID       *string
 }
 
-func (s *CaseService) UpdateCase(ctx context.Context, p *access.Principal, id string, in UpdateCaseInput) (*CaseDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *CaseService) UpdateCase(ctx context.Context, p *access.Principal, id string, in UpdateCaseInput, meta AuditRequestMeta) (*CaseDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetCase(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCase(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toCaseDTO(c)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	if in.Title != nil {
 		t := strings.TrimSpace(*in.Title)
 		if t == "" {
@@ -261,28 +271,45 @@ func (s *CaseService) UpdateCase(ctx context.Context, p *access.Principal, id st
 	if in.TeamID != nil {
 		c.TeamID = in.TeamID
 	}
-	if err := s.repo.UpdateCase(ctx, c, instIDs); err != nil {
+	if !p.RowVisible(c.InstitutionID, c.DepartmentID, c.TeamID) {
+		return nil, ErrForbiddenScope
+	}
+	if err := s.repo.UpdateCase(ctx, c, p); err != nil {
 		return nil, err
 	}
-	return s.GetCase(ctx, p, id)
+	out, err := s.GetCase(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "cases",
+		Operation:  "case.update",
+		TargetType: "case",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
 }
 
 // AssignCase sets assignee; moves status from submitted → assigned when applicable.
-func (s *CaseService) AssignCase(ctx context.Context, p *access.Principal, caseID, assigneeUserID string) (*CaseDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *CaseService) AssignCase(ctx context.Context, p *access.Principal, caseID, assigneeUserID string, meta AuditRequestMeta) (*CaseDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetCase(ctx, caseID, p)
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCase(ctx, caseID, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toCaseDTO(c)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	aid := assigneeUserID
 	newStatus := ""
 	if c.Status == "submitted" {
 		newStatus = "assigned"
 	}
-	if err := s.repo.SetAssignee(ctx, caseID, instIDs, &aid, newStatus); err != nil {
+	if err := s.repo.SetAssignee(ctx, caseID, p, &aid, newStatus); err != nil {
 		return nil, err
 	}
 	_ = s.repo.InsertAssignment(ctx, &model.CaseAssignment{
@@ -291,15 +318,27 @@ func (s *CaseService) AssignCase(ctx context.Context, p *access.Principal, caseI
 		UserID:     assigneeUserID,
 		AssignedAt: time.Now().UTC(),
 	})
-	return s.GetCase(ctx, p, caseID)
-}
-
-func (s *CaseService) AddProcessingRecord(ctx context.Context, p *access.Principal, caseID, actorUserID, stepCode string, note *string) (*ProcessingRecordDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+	out, err := s.GetCase(ctx, p, caseID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.GetCase(ctx, caseID, instIDs); err != nil {
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "cases",
+		Operation:  "case.assign",
+		TargetType: "case",
+		TargetID:   caseID,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
+}
+
+func (s *CaseService) AddProcessingRecord(ctx context.Context, p *access.Principal, caseID, actorUserID, stepCode string, note *string, meta AuditRequestMeta) (*ProcessingRecordDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetCase(ctx, caseID, p); err != nil {
 		return nil, err
 	}
 	stepCode = strings.TrimSpace(stepCode)
@@ -317,21 +356,33 @@ func (s *CaseService) AddProcessingRecord(ctx context.Context, p *access.Princip
 	if err := s.repo.CreateProcessingRecord(ctx, rec); err != nil {
 		return nil, err
 	}
-	return &ProcessingRecordDTO{
+	dto := &ProcessingRecordDTO{
 		ID:          rec.ID,
 		StepCode:    rec.StepCode,
 		ActorUserID: rec.ActorUserID,
 		Note:        rec.Note,
 		CreatedAt:   rec.CreatedAt.UTC().Format(time.RFC3339),
-	}, nil
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "cases",
+		Operation:  "case.processing_record.create",
+		TargetType: "case",
+		TargetID:   caseID,
+		After: map[string]any{
+			"recordId":    dto.ID,
+			"stepCode":    dto.StepCode,
+			"actorUserId": dto.ActorUserID,
+		},
+		Meta: meta,
+	})
+	return dto, nil
 }
 
 func (s *CaseService) ListProcessingRecords(ctx context.Context, p *access.Principal, caseID string) ([]ProcessingRecordDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.GetCase(ctx, caseID, instIDs); err != nil {
+	if _, err := s.repo.GetCase(ctx, caseID, p); err != nil {
 		return nil, err
 	}
 	rows, err := s.repo.ListProcessingRecords(ctx, caseID, "created_at ASC")
@@ -372,15 +423,16 @@ func allowedTransition(from, to string) bool {
 	return m[from][to]
 }
 
-func (s *CaseService) AddStatusTransition(ctx context.Context, p *access.Principal, caseID, actorUserID, toStatus string) (*CaseDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *CaseService) AddStatusTransition(ctx context.Context, p *access.Principal, caseID, actorUserID, toStatus string, meta AuditRequestMeta) (*CaseDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetCase(ctx, caseID, p)
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.GetCase(ctx, caseID, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toCaseDTO(c)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	toStatus = strings.TrimSpace(toStatus)
 	if toStatus == "" || !allowedTransition(c.Status, toStatus) {
 		return nil, ErrInvalidStatusTransition
@@ -396,18 +448,30 @@ func (s *CaseService) AddStatusTransition(ctx context.Context, p *access.Princip
 	if err := s.repo.CreateStatusTransition(ctx, tr); err != nil {
 		return nil, err
 	}
-	if err := s.repo.UpdateCaseStatus(ctx, caseID, instIDs, toStatus); err != nil {
+	if err := s.repo.UpdateCaseStatus(ctx, caseID, p, toStatus); err != nil {
 		return nil, err
 	}
-	return s.GetCase(ctx, p, caseID)
-}
-
-func (s *CaseService) ListStatusTransitions(ctx context.Context, p *access.Principal, caseID string) ([]StatusTransitionDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+	out, err := s.GetCase(ctx, p, caseID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.GetCase(ctx, caseID, instIDs); err != nil {
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "cases",
+		Operation:  "case.status_transition",
+		TargetType: "case",
+		TargetID:   caseID,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
+}
+
+func (s *CaseService) ListStatusTransitions(ctx context.Context, p *access.Principal, caseID string) ([]StatusTransitionDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetCase(ctx, caseID, p); err != nil {
 		return nil, err
 	}
 	rows, err := s.repo.ListStatusTransitions(ctx, caseID, "created_at ASC")

@@ -4,7 +4,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
-import { DEV_ADMIN_USER_ID, DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { useCreateScopeContext } from '@/composables/useDataScope'
 import { useAuthStore } from '@/stores/auth'
 import { caseStatusLabel, humanizeTechnicalLabel } from '@/utils/display'
 
@@ -44,6 +44,7 @@ type ListResp = {
 }
 
 const auth = useAuthStore()
+const { requireContext } = useCreateScopeContext()
 const canManage = () => auth.hasPermission('cases.manage')
 
 const loading = ref(false)
@@ -138,8 +139,17 @@ async function submitCreate() {
   }
   createSaving.value = true
   try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
     await apiPost<CaseRow>('/api/v1/cases', {
-      institutionId: DEV_INSTITUTION_ID,
+      institutionId: scope.institutionId,
+      departmentId: scope.departmentId,
+      teamId: scope.teamId,
       caseType: formType.value.trim(),
       title: formTitle.value.trim(),
       description: formDesc.value.trim(),
@@ -188,14 +198,19 @@ async function assignToAdmin() {
   if (!row) {
     return
   }
+  const uid = auth.userId
+  if (!uid) {
+    ElMessage.error('Your user id is not available. Sign in again.')
+    return
+  }
   try {
-    await ElMessageBox.confirm('Assign this case to the administrator account?', 'Assign', { type: 'info' })
+    await ElMessageBox.confirm('Assign this case to you (the signed-in user)?', 'Assign', { type: 'info' })
   } catch {
     return
   }
   try {
     const c = await apiPost<CaseRow>(`/api/v1/cases/${row.id}/assign`, {
-      assigneeUserId: DEV_ADMIN_USER_ID,
+      assigneeUserId: uid,
     })
     activeCase.value = c
     ElMessage.success('Assigned.')
@@ -386,7 +401,7 @@ onMounted(load)
 
         <div v-if="canManage()" class="detail-actions">
           <el-button size="small" :icon="EditPen" @click="editCase">Edit title/description</el-button>
-          <el-button size="small" @click="assignToAdmin">Assign to administrator</el-button>
+          <el-button size="small" @click="assignToAdmin">Assign to me</el-button>
         </div>
         <div v-if="canManage()" class="detail-actions">
           <span class="muted">Next status</span>

@@ -131,7 +131,7 @@ func (h *FileHandler) CompleteUpload(c *gin.Context) {
 	if raw, _ := io.ReadAll(c.Request.Body); len(bytes.TrimSpace(raw)) > 0 {
 		_ = json.Unmarshal(raw, &body)
 	}
-	out, err := h.svc.CompleteUpload(c.Request.Context(), uid, uploadID, service.CompleteUploadInput{SHA256: body.SHA256})
+	out, err := h.svc.CompleteUpload(c.Request.Context(), uid, uploadID, service.CompleteUploadInput{SHA256: body.SHA256}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrUploadNotFound) {
 		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "upload not found")
 		return
@@ -232,7 +232,7 @@ func (h *FileHandler) LinkFile(c *gin.Context) {
 	err := h.svc.LinkFile(c.Request.Context(), uid, pr, fileID, service.LinkFileInput{
 		RefType: body.RefType,
 		RefID:   body.RefID,
-	})
+	}, auditRequestMeta(c))
 	if errors.Is(err, service.ErrFileNotFound) {
 		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "file or target not found")
 		return

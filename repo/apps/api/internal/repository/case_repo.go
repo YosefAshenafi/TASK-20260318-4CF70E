@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"pharmaops/api/internal/access"
 	"pharmaops/api/internal/model"
 )
 
@@ -54,11 +55,12 @@ func (r *CaseRepository) AllocateCaseSerial(ctx context.Context, tx *gorm.DB, in
 	return seq, nil
 }
 
-func (r *CaseRepository) RecentDuplicateCount(ctx context.Context, institutionIDs []string, hash string, since time.Time) (int64, error) {
+func (r *CaseRepository) RecentDuplicateCount(ctx context.Context, p *access.Principal, hash string, since time.Time) (int64, error) {
 	var n int64
-	err := r.db.WithContext(ctx).Model(&model.CaseRecord{}).
-		Where("institution_id IN ? AND duplicate_guard_hash = ? AND created_at >= ?", institutionIDs, hash, since).
-		Count(&n).Error
+	q := r.db.WithContext(ctx).Model(&model.CaseRecord{}).
+		Where("duplicate_guard_hash = ? AND created_at >= ?", hash, since)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.Count(&n).Error
 	return n, err
 }
 
@@ -66,8 +68,9 @@ func (r *CaseRepository) CreateCase(ctx context.Context, tx *gorm.DB, c *model.C
 	return tx.WithContext(ctx).Create(c).Error
 }
 
-func caseListQuery(db *gorm.DB, institutionIDs []string, search, status string) *gorm.DB {
-	q := db.Model(&model.CaseRecord{}).Where("institution_id IN ?", institutionIDs)
+func caseListQuery(db *gorm.DB, p *access.Principal, search, status string) *gorm.DB {
+	q := db.Model(&model.CaseRecord{})
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -78,14 +81,14 @@ func caseListQuery(db *gorm.DB, institutionIDs []string, search, status string) 
 	return q
 }
 
-func (r *CaseRepository) ListCases(ctx context.Context, institutionIDs []string, offset, limit int, orderClause, search, status string) ([]model.CaseRecord, int64, error) {
-	base := caseListQuery(r.db.WithContext(ctx), institutionIDs, search, status)
+func (r *CaseRepository) ListCases(ctx context.Context, p *access.Principal, offset, limit int, orderClause, search, status string) ([]model.CaseRecord, int64, error) {
+	base := caseListQuery(r.db.WithContext(ctx), p, search, status)
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []model.CaseRecord
-	err := caseListQuery(r.db.WithContext(ctx), institutionIDs, search, status).
+	err := caseListQuery(r.db.WithContext(ctx), p, search, status).
 		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
@@ -93,21 +96,21 @@ func (r *CaseRepository) ListCases(ctx context.Context, institutionIDs []string,
 	return rows, total, err
 }
 
-func (r *CaseRepository) GetCase(ctx context.Context, id string, institutionIDs []string) (*model.CaseRecord, error) {
+func (r *CaseRepository) GetCase(ctx context.Context, id string, p *access.Principal) (*model.CaseRecord, error) {
 	var row model.CaseRecord
-	err := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		First(&row).Error
+	q := r.db.WithContext(ctx).Model(&model.CaseRecord{}).Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	err := q.First(&row).Error
 	if err != nil {
 		return nil, err
 	}
 	return &row, nil
 }
 
-func (r *CaseRepository) UpdateCase(ctx context.Context, row *model.CaseRecord, institutionIDs []string) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND institution_id IN ?", row.ID, institutionIDs).
-		Updates(map[string]interface{}{
+func (r *CaseRepository) UpdateCase(ctx context.Context, row *model.CaseRecord, p *access.Principal) error {
+	q := r.db.WithContext(ctx).Model(&model.CaseRecord{}).Where("id = ?", row.ID)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Updates(map[string]interface{}{
 			"title":        row.Title,
 			"description":  row.Description,
 			"department_id": row.DepartmentID,
@@ -123,10 +126,10 @@ func (r *CaseRepository) UpdateCase(ctx context.Context, row *model.CaseRecord, 
 	return nil
 }
 
-func (r *CaseRepository) UpdateCaseStatus(ctx context.Context, id string, institutionIDs []string, status string) error {
-	res := r.db.WithContext(ctx).Model(&model.CaseRecord{}).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		Updates(map[string]interface{}{
+func (r *CaseRepository) UpdateCaseStatus(ctx context.Context, id string, p *access.Principal, status string) error {
+	q := r.db.WithContext(ctx).Model(&model.CaseRecord{}).Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Updates(map[string]interface{}{
 			"status":     status,
 			"updated_at": time.Now().UTC(),
 		})
@@ -139,7 +142,7 @@ func (r *CaseRepository) UpdateCaseStatus(ctx context.Context, id string, instit
 	return nil
 }
 
-func (r *CaseRepository) SetAssignee(ctx context.Context, id string, institutionIDs []string, assigneeID *string, newStatus string) error {
+func (r *CaseRepository) SetAssignee(ctx context.Context, id string, p *access.Principal, assigneeID *string, newStatus string) error {
 	updates := map[string]interface{}{
 		"assignee_user_id": assigneeID,
 		"updated_at":       time.Now().UTC(),
@@ -147,9 +150,9 @@ func (r *CaseRepository) SetAssignee(ctx context.Context, id string, institution
 	if newStatus != "" {
 		updates["status"] = newStatus
 	}
-	res := r.db.WithContext(ctx).Model(&model.CaseRecord{}).
-		Where("id = ? AND institution_id IN ?", id, institutionIDs).
-		Updates(updates)
+	q := r.db.WithContext(ctx).Model(&model.CaseRecord{}).Where("id = ?", id)
+	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
+	res := q.Updates(updates)
 	if res.Error != nil {
 		return res.Error
 	}

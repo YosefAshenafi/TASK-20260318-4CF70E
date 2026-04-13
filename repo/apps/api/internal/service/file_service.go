@@ -53,10 +53,11 @@ type FileService struct {
 	root     string
 	files    *repository.FileRepository
 	cases    *repository.CaseRepository
+	audit    *AuditService
 }
 
-func NewFileService(root string, files *repository.FileRepository, cases *repository.CaseRepository) *FileService {
-	return &FileService{root: root, files: files, cases: cases}
+func NewFileService(root string, files *repository.FileRepository, cases *repository.CaseRepository, audit *AuditService) *FileService {
+	return &FileService{root: root, files: files, cases: cases, audit: audit}
 }
 
 // InitUploadInput matches POST /files/uploads/init.
@@ -193,7 +194,7 @@ type CompleteUploadResponse struct {
 	Deduplicated   bool   `json:"deduplicated"`
 }
 
-func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID string, in CompleteUploadInput) (*CompleteUploadResponse, error) {
+func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID string, in CompleteUploadInput, meta AuditRequestMeta) (*CompleteUploadResponse, error) {
 	if s.root == "" {
 		return nil, errors.New("file storage not configured")
 	}
@@ -273,6 +274,23 @@ func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID strin
 		if err := s.files.UpdateUploadSessionMerged(ctx, uploadID, "completed", mid); err != nil {
 			return nil, err
 		}
+		m := meta
+		if m.OperatorUserID == "" {
+			m.OperatorUserID = userID
+		}
+		_ = s.audit.LogMutation(ctx, AuditMutationInput{
+			Module:     "files",
+			Operation:  "file.upload_complete",
+			TargetType: "file_object",
+			TargetID:   existing.ID,
+			After: map[string]any{
+				"sha256":       finalHash,
+				"deduplicated": true,
+				"uploadId":     uploadID,
+				"sizeBytes":    sess.TotalSize,
+			},
+			Meta: m,
+		})
 		return &CompleteUploadResponse{FileID: existing.ID, SHA256: finalHash, Deduplicated: true}, nil
 	}
 	if err != nil && !repository.IsNotFound(err) {
@@ -336,6 +354,23 @@ func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID strin
 		return nil, err
 	}
 	_ = s.removeChunkDir(uploadID)
+	m := meta
+	if m.OperatorUserID == "" {
+		m.OperatorUserID = userID
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "files",
+		Operation:  "file.upload_complete",
+		TargetType: "file_object",
+		TargetID:   fileID,
+		After: map[string]any{
+			"sha256":       finalHash,
+			"deduplicated": false,
+			"uploadId":     uploadID,
+			"sizeBytes":    sess.TotalSize,
+		},
+		Meta: m,
+	})
 	return &CompleteUploadResponse{FileID: fileID, SHA256: finalHash, Deduplicated: false}, nil
 }
 
@@ -451,7 +486,7 @@ type LinkFileInput struct {
 	RefID   string
 }
 
-func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Principal, fileID string, in LinkFileInput) error {
+func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Principal, fileID string, in LinkFileInput, meta AuditRequestMeta) error {
 	if pr == nil || userID == "" {
 		return ErrForbiddenScope
 	}
@@ -463,11 +498,10 @@ func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Pr
 		return err
 	}
 	if in.RefType == "case" {
-		ids := pr.AllowedInstitutionIDs()
-		if len(ids) == 0 {
-			return ErrForbiddenScope
+		if err := requireScope(pr); err != nil {
+			return err
 		}
-		_, err := s.cases.GetCase(ctx, in.RefID, ids)
+		_, err := s.cases.GetCase(ctx, in.RefID, pr)
 		if repository.IsNotFound(err) {
 			return ErrFileNotFound
 		}
@@ -485,5 +519,24 @@ func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Pr
 		CreatedByUserID: userID,
 		CreatedAt:       time.Now().UTC(),
 	}
-	return s.files.CreateFileReference(ctx, ref)
+	if err := s.files.CreateFileReference(ctx, ref); err != nil {
+		return err
+	}
+	m := meta
+	if m.OperatorUserID == "" {
+		m.OperatorUserID = userID
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "files",
+		Operation:  "file.link",
+		TargetType: "file_object",
+		TargetID:   fileID,
+		After: map[string]any{
+			"referenceId": ref.ID,
+			"refType":     in.RefType,
+			"refId":       in.RefID,
+		},
+		Meta: m,
+	})
+	return nil
 }

@@ -56,22 +56,12 @@ type ViolationDTO struct {
 }
 
 type ComplianceService struct {
-	repo *repository.ComplianceRepository
+	repo  *repository.ComplianceRepository
+	audit *AuditService
 }
 
-func NewComplianceService(repo *repository.ComplianceRepository) *ComplianceService {
-	return &ComplianceService{repo: repo}
-}
-
-func (s *ComplianceService) scopeInstitutions(p *access.Principal) ([]string, error) {
-	if p == nil {
-		return nil, ErrForbiddenScope
-	}
-	ids := p.AllowedInstitutionIDs()
-	if len(ids) == 0 {
-		return nil, ErrForbiddenScope
-	}
-	return ids, nil
+func NewComplianceService(repo *repository.ComplianceRepository, audit *AuditService) *ComplianceService {
+	return &ComplianceService{repo: repo, audit: audit}
 }
 
 func qualificationOrder(sortBy, sortOrder string) string {
@@ -183,11 +173,10 @@ func toViolationDTO(v *model.RestrictionViolationRecord) ViolationDTO {
 }
 
 func (s *ComplianceService) ListQualifications(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]QualificationDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListQualifications(ctx, instIDs, offset, pageSize, qualificationOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListQualifications(ctx, p, offset, pageSize, qualificationOrder(sortBy, sortOrder))
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -199,11 +188,10 @@ func (s *ComplianceService) ListQualifications(ctx context.Context, p *access.Pr
 }
 
 func (s *ComplianceService) GetQualification(ctx context.Context, p *access.Principal, id string) (*QualificationDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	q, err := s.repo.GetQualification(ctx, id, instIDs)
+	q, err := s.repo.GetQualification(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +208,10 @@ type CreateQualificationInput struct {
 	Metadata      map[string]any
 }
 
-func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.Principal, in CreateQualificationInput) (*QualificationDTO, error) {
+func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.Principal, in CreateQualificationInput, meta AuditRequestMeta) (*QualificationDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
 	if !p.AllowsInstitution(in.InstitutionID) {
 		return nil, ErrForbiddenScope
 	}
@@ -256,11 +247,19 @@ func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.P
 	if err := s.repo.CreateQualification(ctx, q); err != nil {
 		return nil, err
 	}
-	loaded, err := s.repo.GetQualification(ctx, q.ID, []string{in.InstitutionID})
+	loaded, err := s.repo.GetQualification(ctx, q.ID, p)
 	if err != nil {
 		return nil, err
 	}
 	dto := toQualificationDTO(loaded)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "compliance",
+		Operation:  "qualification.create",
+		TargetType: "qualification",
+		TargetID:   dto.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -272,15 +271,16 @@ type UpdateQualificationInput struct {
 	Status      *string
 }
 
-func (s *ComplianceService) UpdateQualification(ctx context.Context, p *access.Principal, id string, in UpdateQualificationInput) (*QualificationDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *ComplianceService) UpdateQualification(ctx context.Context, p *access.Principal, id string, in UpdateQualificationInput, meta AuditRequestMeta) (*QualificationDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	q, err := s.repo.GetQualification(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	q, err := s.repo.GetQualification(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toQualificationDTO(q)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	if in.DisplayName != nil {
 		q.DisplayName = *in.DisplayName
 	}
@@ -306,45 +306,86 @@ func (s *ComplianceService) UpdateQualification(ctx context.Context, p *access.P
 		}
 		q.MetadataJSON = b
 	}
-	if err := s.repo.UpdateQualification(ctx, q, instIDs); err != nil {
+	if err := s.repo.UpdateQualification(ctx, q, p); err != nil {
 		return nil, err
 	}
-	return s.GetQualification(ctx, p, id)
+	out, err := s.GetQualification(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "compliance",
+		Operation:  "qualification.update",
+		TargetType: "qualification",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
 }
 
-func (s *ComplianceService) ActivateQualification(ctx context.Context, p *access.Principal, id string) (*QualificationDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *ComplianceService) ActivateQualification(ctx context.Context, p *access.Principal, id string, meta AuditRequestMeta) (*QualificationDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	q, err := s.repo.GetQualification(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	q, err := s.repo.GetQualification(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toQualificationDTO(q)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	q.Status = "active"
 	q.DeactivatedAt = nil
-	if err := s.repo.UpdateQualification(ctx, q, instIDs); err != nil {
+	if err := s.repo.UpdateQualification(ctx, q, p); err != nil {
 		return nil, err
 	}
-	return s.GetQualification(ctx, p, id)
+	out, err := s.GetQualification(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "compliance",
+		Operation:  "qualification.activate",
+		TargetType: "qualification",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
 }
 
-func (s *ComplianceService) DeactivateQualification(ctx context.Context, p *access.Principal, id string) (*QualificationDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *ComplianceService) DeactivateQualification(ctx context.Context, p *access.Principal, id string, meta AuditRequestMeta) (*QualificationDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	q, err := s.repo.GetQualification(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	q, err := s.repo.GetQualification(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toQualificationDTO(q)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	now := time.Now().UTC()
 	q.Status = "inactive"
 	q.DeactivatedAt = &now
-	if err := s.repo.UpdateQualification(ctx, q, instIDs); err != nil {
+	if err := s.repo.UpdateQualification(ctx, q, p); err != nil {
 		return nil, err
 	}
-	return s.GetQualification(ctx, p, id)
+	out, err := s.GetQualification(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "compliance",
+		Operation:  "qualification.deactivate",
+		TargetType: "qualification",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
 }
 
 // ListExpiringQualifications returns active qualifications expiring within the next `days` (inclusive window from today).
@@ -355,14 +396,13 @@ func (s *ComplianceService) ListExpiringQualifications(ctx context.Context, p *a
 	if days > 365 {
 		days = 365
 	}
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	end := startOfToday.AddDate(0, 0, days)
-	rows, err := s.repo.ListQualificationsExpiringBetween(ctx, instIDs, startOfToday, end)
+	rows, err := s.repo.ListQualificationsExpiringBetween(ctx, p, startOfToday, end)
 	if err != nil {
 		return nil, err
 	}
@@ -375,21 +415,19 @@ func (s *ComplianceService) ListExpiringQualifications(ctx context.Context, p *a
 
 // RunQualificationExpirationJob deactivates active qualifications whose expires_on is before today.
 func (s *ComplianceService) RunQualificationExpirationJob(ctx context.Context, p *access.Principal) (deactivated int64, err error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return 0, err
 	}
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	return s.repo.DeactivateExpiredQualifications(ctx, instIDs, startOfToday)
+	return s.repo.DeactivateExpiredQualifications(ctx, p, startOfToday)
 }
 
 func (s *ComplianceService) ListRestrictions(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]RestrictionDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListRestrictions(ctx, instIDs, offset, pageSize, restrictionOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListRestrictions(ctx, p, offset, pageSize, restrictionOrder(sortBy, sortOrder))
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -401,11 +439,10 @@ func (s *ComplianceService) ListRestrictions(ctx context.Context, p *access.Prin
 }
 
 func (s *ComplianceService) GetRestriction(ctx context.Context, p *access.Principal, id string) (*RestrictionDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, err
 	}
-	r, err := s.repo.GetRestriction(ctx, id, instIDs)
+	r, err := s.repo.GetRestriction(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +459,10 @@ type CreateRestrictionInput struct {
 	IsActive      bool
 }
 
-func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Principal, in CreateRestrictionInput) (*RestrictionDTO, error) {
+func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Principal, in CreateRestrictionInput, meta AuditRequestMeta) (*RestrictionDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
 	if !p.AllowsInstitution(in.InstitutionID) {
 		return nil, ErrForbiddenScope
 	}
@@ -445,11 +485,19 @@ func (s *ComplianceService) CreateRestriction(ctx context.Context, p *access.Pri
 	if err := s.repo.CreateRestriction(ctx, row); err != nil {
 		return nil, err
 	}
-	loaded, err := s.repo.GetRestriction(ctx, row.ID, []string{in.InstitutionID})
+	loaded, err := s.repo.GetRestriction(ctx, row.ID, p)
 	if err != nil {
 		return nil, err
 	}
 	dto := toRestrictionDTO(loaded)
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "fees",
+		Operation:  "restriction.create",
+		TargetType: "restriction",
+		TargetID:   dto.ID,
+		After:      DTOToAuditMap(&dto),
+		Meta:       meta,
+	})
 	return &dto, nil
 }
 
@@ -461,15 +509,16 @@ type UpdateRestrictionInput struct {
 	IsActive     *bool
 }
 
-func (s *ComplianceService) UpdateRestriction(ctx context.Context, p *access.Principal, id string, in UpdateRestrictionInput) (*RestrictionDTO, error) {
-	instIDs, err := s.scopeInstitutions(p)
+func (s *ComplianceService) UpdateRestriction(ctx context.Context, p *access.Principal, id string, in UpdateRestrictionInput, meta AuditRequestMeta) (*RestrictionDTO, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
+	row, err := s.repo.GetRestriction(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.repo.GetRestriction(ctx, id, instIDs)
-	if err != nil {
-		return nil, err
-	}
+	beforeDTO := toRestrictionDTO(row)
+	beforeMap := DTOToAuditMap(&beforeDTO)
 	if in.ClientID != nil {
 		row.ClientID = *in.ClientID
 	}
@@ -486,18 +535,30 @@ func (s *ComplianceService) UpdateRestriction(ctx context.Context, p *access.Pri
 	if in.IsActive != nil {
 		row.IsActive = *in.IsActive
 	}
-	if err := s.repo.UpdateRestriction(ctx, row, instIDs); err != nil {
+	if err := s.repo.UpdateRestriction(ctx, row, p); err != nil {
 		return nil, err
 	}
-	return s.GetRestriction(ctx, p, id)
+	out, err := s.GetRestriction(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "fees",
+		Operation:  "restriction.update",
+		TargetType: "restriction",
+		TargetID:   id,
+		Before:     beforeMap,
+		After:      DTOToAuditMap(out),
+		Meta:       meta,
+	})
+	return out, nil
 }
 
 func (s *ComplianceService) ListViolations(ctx context.Context, p *access.Principal, page, pageSize, offset int, sortBy, sortOrder string) ([]ViolationDTO, int64, int, int, error) {
-	instIDs, err := s.scopeInstitutions(p)
-	if err != nil {
+	if err := requireScope(p); err != nil {
 		return nil, 0, page, pageSize, err
 	}
-	rows, total, err := s.repo.ListViolations(ctx, instIDs, offset, pageSize, violationOrder(sortBy, sortOrder))
+	rows, total, err := s.repo.ListViolations(ctx, p, offset, pageSize, violationOrder(sortBy, sortOrder))
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}
@@ -536,6 +597,9 @@ func parseRestrictionRule(b []byte) (restrictionRule, error) {
 }
 
 func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Principal, in CheckPurchaseInput) (*CheckPurchaseResult, error) {
+	if err := requireScope(p); err != nil {
+		return nil, err
+	}
 	if !p.AllowsInstitution(in.InstitutionID) {
 		return nil, ErrForbiddenScope
 	}

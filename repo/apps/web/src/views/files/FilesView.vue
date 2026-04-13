@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { apiGet, apiPost, apiPutBytes } from '@/api/http'
-import { DEV_CASE_ID } from '@/config/devSeed'
 import { useAuthStore } from '@/stores/auth'
 
 type FileRow = {
@@ -47,7 +46,7 @@ const uploadProgress = ref('')
 const selectedFile = ref<File | null>(null)
 
 const linkFileId = ref('')
-const linkRefId = ref(DEV_CASE_ID)
+const linkRefId = ref('')
 
 const chunkSizeBytes = 1024 * 1024
 
@@ -235,7 +234,7 @@ onMounted(() => {
       </template>
       <div class="link-grid">
         <el-input v-model="linkFileId" placeholder="File identifier" clearable />
-        <el-input v-model="linkRefId" placeholder="Case identifier" clearable />
+        <el-input v-model="linkRefId" placeholder="Case UUID (from Cases list)" clearable />
         <el-button type="primary" @click="linkToCase">Link</el-button>
       </div>
       <p class="muted small">Only cases you can access can be linked. A sample case identifier may appear when demo data is loaded.</p>
