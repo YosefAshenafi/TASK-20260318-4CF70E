@@ -26,7 +26,7 @@ func NewAuditRepository(db *gorm.DB) *AuditRepository {
 func auditLogQuery(db *gorm.DB, p *access.Principal, module, targetType string, from, to *time.Time) *gorm.DB {
 	q := db.Model(&model.AuditLog{})
 	if p != nil {
-		q = applyScopeOrNullAudit(q, p)
+		q = applyAuditScope(q, p)
 	}
 	if module != "" {
 		q = q.Where("module = ?", module)
@@ -43,12 +43,15 @@ func auditLogQuery(db *gorm.DB, p *access.Principal, module, targetType string, 
 	return q
 }
 
-func applyScopeOrNullAudit(db *gorm.DB, p *access.Principal) *gorm.DB {
+func applyAuditScope(db *gorm.DB, p *access.Principal) *gorm.DB {
+	if p != nil && p.Has(access.PermissionFullAccess) {
+		return db
+	}
 	expr, args, ok := buildDataScopeExpr(p, "institution_id", "department_id", "team_id")
 	if !ok {
-		return db.Where("institution_id IS NULL")
+		return db.Where("1 = 0")
 	}
-	return db.Where("(institution_id IS NULL OR "+expr+")", args...)
+	return db.Where(expr, args...)
 }
 
 func (r *AuditRepository) ListLogs(ctx context.Context, p *access.Principal, offset, limit int, orderClause, module, targetType string, from, to *time.Time) ([]model.AuditLog, int64, error) {

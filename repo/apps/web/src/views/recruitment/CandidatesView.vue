@@ -10,35 +10,30 @@ type CandidateRow = {
   id: string
   name: string
   phoneMasked: string
+  idNumberMasked: string
+  email?: string
+  phone?: string
+  idNumber?: string
   experienceYears?: number
   educationLevel?: string
   skills: string[]
   tags: string[]
+  customFields: Record<string, unknown>
   institutionId: string
   createdAt: string
+  updatedAt: string
 }
-
-type ListResp = {
-  items: CandidateRow[]
-  total: number
-  page: number
-  pageSize: number
-}
-
+type ListResp = { items: CandidateRow[]; total: number; page: number; pageSize: number }
 type PositionOption = { id: string; title: string }
-type DuplicateGroup = {
-  matchType: string
-  institutionId: string
-  candidateIds: string[]
-}
+type DuplicateGroup = { matchType: string; institutionId: string; candidateIds: string[] }
 type MatchScore = {
   score: number
   breakdown: { skills: number; experience: number; education: number }
   reasons: string[]
 }
+type CustomFieldKV = { key: string; value: string }
 
 const { requireContext } = useCreateScopeContext()
-
 const loading = ref(false)
 const rows = ref<CandidateRow[]>([])
 const total = ref(0)
@@ -48,15 +43,33 @@ const pageSize = ref(20)
 const filterKeyword = ref('')
 const filterSkills = ref('')
 const filterEdu = ref('')
-const filterMinExp = ref<number | undefined>(undefined)
-const filterMaxExp = ref<number | undefined>(undefined)
+const filterMinExp = ref<number | undefined>()
+const filterMaxExp = ref<number | undefined>()
+const filterCreatedFrom = ref('')
+const filterCreatedTo = ref('')
+const filterUpdatedFrom = ref('')
+const filterUpdatedTo = ref('')
 
-const dialogVisible = ref(false)
-const dialogSaving = ref(false)
+const createVisible = ref(false)
+const createSaving = ref(false)
 const formName = ref('')
-const formExp = ref<number | undefined>(undefined)
+const formExp = ref<number | undefined>()
 const formEdu = ref('')
 const formSkills = ref('')
+const formTags = ref('')
+
+const editVisible = ref(false)
+const editSaving = ref(false)
+const editCandidateId = ref('')
+const editName = ref('')
+const editPhone = ref('')
+const editIDNumber = ref('')
+const editEmail = ref('')
+const editExp = ref<number | undefined>()
+const editEdu = ref('')
+const editSkills = ref('')
+const editTags = ref('')
+const editCustomFields = ref<CustomFieldKV[]>([])
 
 const importVisible = ref(false)
 const importSaving = ref(false)
@@ -74,6 +87,34 @@ const matchResult = ref<MatchScore | null>(null)
 const similarCandidates = ref<CandidateRow[]>([])
 const similarPositions = ref<PositionOption[]>([])
 
+function splitCSV(input: string): string[] {
+  const seen = new Set<string>()
+  return input
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+    .filter((x) => {
+      if (seen.has(x)) return false
+      seen.add(x)
+      return true
+    })
+}
+function customFieldMap(rows: CustomFieldKV[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const row of rows) {
+    const k = row.key.trim()
+    if (!k) continue
+    out[k] = row.value
+  }
+  return out
+}
+function customFieldRows(input: Record<string, unknown> | undefined): CustomFieldKV[] {
+  if (!input) return []
+  return Object.keys(input)
+    .sort()
+    .map((k) => ({ key: k, value: String(input[k] ?? '') }))
+}
+
 async function load() {
   loading.value = true
   try {
@@ -88,6 +129,10 @@ async function load() {
     if (filterEdu.value.trim()) q.set('educationLevel', filterEdu.value.trim())
     if (filterMinExp.value != null) q.set('minExperience', String(filterMinExp.value))
     if (filterMaxExp.value != null) q.set('maxExperience', String(filterMaxExp.value))
+    if (filterCreatedFrom.value.trim()) q.set('createdFrom', filterCreatedFrom.value.trim())
+    if (filterCreatedTo.value.trim()) q.set('createdTo', filterCreatedTo.value.trim())
+    if (filterUpdatedFrom.value.trim()) q.set('updatedFrom', filterUpdatedFrom.value.trim())
+    if (filterUpdatedTo.value.trim()) q.set('updatedTo', filterUpdatedTo.value.trim())
     const data = await apiGet<ListResp>(`/api/v1/recruitment/candidates?${q}`)
     rows.value = data.items
     total.value = data.total
@@ -97,19 +142,17 @@ async function load() {
     loading.value = false
   }
 }
-
 async function loadDuplicates() {
   duplicateLoading.value = true
   try {
     const data = await apiGet<{ items: DuplicateGroup[] }>('/api/v1/recruitment/candidates/duplicates')
     duplicates.value = data.items ?? []
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : 'Failed to load duplicates')
+  } catch {
+    duplicates.value = []
   } finally {
     duplicateLoading.value = false
   }
 }
-
 async function loadPositions() {
   try {
     const data = await apiGet<{ items: PositionOption[] }>('/api/v1/recruitment/positions?page=1&pageSize=100')
@@ -123,7 +166,6 @@ function onPageChange(p: number) {
   page.value = p
   load()
 }
-
 function applyFilters() {
   page.value = 1
   load()
@@ -134,27 +176,14 @@ function openCreate() {
   formExp.value = undefined
   formEdu.value = ''
   formSkills.value = ''
-  dialogVisible.value = true
+  formTags.value = ''
+  createVisible.value = true
 }
-
 async function submitCreate() {
-  if (!formName.value.trim()) {
-    ElMessage.warning('Name is required.')
-    return
-  }
-  dialogSaving.value = true
+  if (!formName.value.trim()) return ElMessage.warning('Name is required.')
+  createSaving.value = true
   try {
-    let scope
-    try {
-      scope = requireContext()
-    } catch (err) {
-      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
-      return
-    }
-    const skills = formSkills.value
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const scope = requireContext()
     await apiPost<CandidateRow>('/api/v1/recruitment/candidates', {
       name: formName.value.trim(),
       institutionId: scope.institutionId,
@@ -162,15 +191,60 @@ async function submitCreate() {
       teamId: scope.teamId,
       experienceYears: formExp.value,
       educationLevel: formEdu.value || undefined,
-      skills,
+      skills: splitCSV(formSkills.value),
+      tags: splitCSV(formTags.value),
     })
-    ElMessage.success('Candidate created.')
-    dialogVisible.value = false
-    await load()
+    ElMessage.success('Candidate created. Duplicate phone/ID records are auto-merged.')
+    createVisible.value = false
+    await Promise.all([load(), loadDuplicates()])
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : 'Create failed')
   } finally {
-    dialogSaving.value = false
+    createSaving.value = false
+  }
+}
+
+async function openEdit(row: CandidateRow) {
+  editSaving.value = false
+  try {
+    const detail = await apiGet<CandidateRow>(`/api/v1/recruitment/candidates/${row.id}`)
+    editCandidateId.value = detail.id
+    editName.value = detail.name
+    editPhone.value = detail.phone ?? ''
+    editIDNumber.value = detail.idNumber ?? ''
+    editEmail.value = detail.email ?? ''
+    editExp.value = detail.experienceYears
+    editEdu.value = detail.educationLevel ?? ''
+    editSkills.value = (detail.skills ?? []).join(', ')
+    editTags.value = (detail.tags ?? []).join(', ')
+    editCustomFields.value = customFieldRows(detail.customFields)
+    editVisible.value = true
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Failed to load candidate details')
+  }
+}
+async function submitEdit() {
+  if (!editName.value.trim()) return ElMessage.warning('Name is required.')
+  editSaving.value = true
+  try {
+    await apiPatch(`/api/v1/recruitment/candidates/${editCandidateId.value}`, {
+      name: editName.value.trim(),
+      phone: editPhone.value.trim(),
+      idNumber: editIDNumber.value.trim(),
+      email: editEmail.value.trim(),
+      experienceYears: editExp.value,
+      educationLevel: editEdu.value.trim() || undefined,
+      skills: splitCSV(editSkills.value),
+      tags: splitCSV(editTags.value),
+      customFields: customFieldMap(editCustomFields.value),
+    })
+    ElMessage.success('Candidate updated.')
+    editVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Update failed')
+  } finally {
+    editSaving.value = false
   }
 }
 
@@ -189,95 +263,33 @@ async function confirmDelete(row: CandidateRow) {
   }
 }
 
-async function quickEdit(row: CandidateRow) {
-  let value: string
-  try {
-    const res = await ElMessageBox.prompt('Update name', 'Edit', {
-      inputValue: row.name,
-      inputPattern: /.+/,
-      inputErrorMessage: 'Name required',
-    })
-    value = res.value
-  } catch {
-    return
-  }
-  try {
-    await apiPatch<CandidateRow>(`/api/v1/recruitment/candidates/${row.id}`, { name: value.trim() })
-    ElMessage.success('Updated.')
-    await load()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : 'Update failed')
-  }
-}
-
 function openImport() {
   importVisible.value = true
 }
-
 async function commitImport() {
   let rows: Array<Record<string, unknown>>
   try {
     const parsed = JSON.parse(importRowsText.value)
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      ElMessage.warning('Import payload must be a non-empty JSON array.')
-      return
-    }
+    if (!Array.isArray(parsed) || parsed.length === 0) return ElMessage.warning('Import payload must be a non-empty JSON array.')
     rows = parsed as Array<Record<string, unknown>>
   } catch {
-    ElMessage.warning('Import payload must be valid JSON.')
-    return
+    return ElMessage.warning('Import payload must be valid JSON.')
   }
-
   importSaving.value = true
   try {
-    let scope
-    try {
-      scope = requireContext()
-    } catch (err) {
-      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
-      return
-    }
+    const scope = requireContext()
     const batch = await apiPost<{ id: string }>('/api/v1/recruitment/candidates/imports', {
       institutionId: scope.institutionId,
       rows,
     })
     await apiPost(`/api/v1/recruitment/candidates/imports/${batch.id}/commit`, {})
-    ElMessage.success('Import committed.')
+    ElMessage.success('Import committed. Duplicate rows are auto-merged by phone/ID.')
     importVisible.value = false
-    await load()
-    await loadDuplicates()
+    await Promise.all([load(), loadDuplicates()])
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : 'Import failed')
   } finally {
     importSaving.value = false
-  }
-}
-
-async function mergeGroup(group: DuplicateGroup) {
-  if (!group.candidateIds || group.candidateIds.length < 2) return
-  const ids = [...group.candidateIds]
-  const baseCandidateId = ids[ids.length - 1]
-  const sourceCandidateIds = ids.slice(0, -1)
-  try {
-    await ElMessageBox.confirm(
-      `Merge ${sourceCandidateIds.length} duplicate record(s) into base ${baseCandidateId.slice(0, 8)}…?`,
-      'Merge duplicates',
-      { type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await apiPost('/api/v1/recruitment/candidates/merge', {
-      baseCandidateId,
-      sourceCandidateIds,
-      strategy: 'latest_wins_fill_missing',
-    })
-    ElMessage.success('Merge completed.')
-    await load()
-    await loadDuplicates()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : 'Merge failed')
   }
 }
 
@@ -289,12 +301,8 @@ function openMatch(row: CandidateRow) {
   similarPositions.value = []
   matchVisible.value = true
 }
-
 async function runMatch() {
-  if (!matchCandidateId.value || !matchPositionId.value) {
-    ElMessage.warning('Select both candidate and position.')
-    return
-  }
+  if (!matchCandidateId.value || !matchPositionId.value) return ElMessage.warning('Select both candidate and position.')
   matching.value = true
   try {
     const res = await apiPost<MatchScore>('/api/v1/recruitment/match/candidate-to-position', {
@@ -303,12 +311,8 @@ async function runMatch() {
     })
     matchResult.value = res
     const [sc, sp] = await Promise.all([
-      apiGet<{ items: CandidateRow[] }>(
-        `/api/v1/recruitment/recommendations/similar-candidates/${matchCandidateId.value}?limit=5`,
-      ),
-      apiGet<{ items: PositionOption[] }>(
-        `/api/v1/recruitment/recommendations/similar-positions/${matchPositionId.value}?limit=5`,
-      ),
+      apiGet<{ items: CandidateRow[] }>(`/api/v1/recruitment/recommendations/similar-candidates/${matchCandidateId.value}?limit=5`),
+      apiGet<{ items: PositionOption[] }>(`/api/v1/recruitment/recommendations/similar-positions/${matchPositionId.value}?limit=5`),
     ])
     similarCandidates.value = sc.items ?? []
     similarPositions.value = sp.items ?? []
@@ -336,231 +340,122 @@ onMounted(async () => {
 
     <el-card class="rec-filters" shadow="never">
       <el-form :inline="true" @submit.prevent="load">
-        <el-form-item label="Search">
-          <el-input v-model="filterKeyword" placeholder="Name keyword" clearable @clear="load" />
-        </el-form-item>
-        <el-form-item label="Skills">
-          <el-input v-model="filterSkills" placeholder="GMP, QA" clearable @clear="load" />
-        </el-form-item>
-        <el-form-item label="Education">
-          <el-input v-model="filterEdu" placeholder="e.g. Bachelor" clearable @clear="load" />
-        </el-form-item>
-        <el-form-item label="Exp min">
-          <el-input-number v-model="filterMinExp" :min="0" :max="60" controls-position="right" placeholder="0" />
-        </el-form-item>
-        <el-form-item label="Exp max">
-          <el-input-number v-model="filterMaxExp" :min="0" :max="60" controls-position="right" placeholder="60" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="applyFilters">Filter</el-button>
-        </el-form-item>
+        <el-form-item label="Search"><el-input v-model="filterKeyword" placeholder="Name keyword" clearable /></el-form-item>
+        <el-form-item label="Skills"><el-input v-model="filterSkills" placeholder="GMP, QA" clearable /></el-form-item>
+        <el-form-item label="Education"><el-input v-model="filterEdu" placeholder="e.g. Bachelor" clearable /></el-form-item>
+        <el-form-item label="Exp min"><el-input-number v-model="filterMinExp" :min="0" :max="60" controls-position="right" /></el-form-item>
+        <el-form-item label="Exp max"><el-input-number v-model="filterMaxExp" :min="0" :max="60" controls-position="right" /></el-form-item>
+        <el-form-item label="Created from"><el-input v-model="filterCreatedFrom" placeholder="RFC3339" /></el-form-item>
+        <el-form-item label="Created to"><el-input v-model="filterCreatedTo" placeholder="RFC3339" /></el-form-item>
+        <el-form-item label="Updated from"><el-input v-model="filterUpdatedFrom" placeholder="RFC3339" /></el-form-item>
+        <el-form-item label="Updated to"><el-input v-model="filterUpdatedTo" placeholder="RFC3339" /></el-form-item>
+        <el-form-item><el-button type="primary" @click="applyFilters">Filter</el-button></el-form-item>
       </el-form>
     </el-card>
 
     <el-card class="rec-card" shadow="never">
       <el-table v-loading="loading" :data="rows" stripe empty-text="No candidates to show">
         <el-table-column prop="name" label="Name" min-width="160" />
-        <el-table-column label="Experience" width="110">
-          <template #default="{ row }">
-            {{ row.experienceYears != null ? `${row.experienceYears} yrs` : '—' }}
-          </template>
-        </el-table-column>
+        <el-table-column prop="phoneMasked" label="Phone" width="130" />
+        <el-table-column prop="idNumberMasked" label="ID" width="130" />
+        <el-table-column label="Experience" width="110"><template #default="{ row }">{{ row.experienceYears != null ? `${row.experienceYears} yrs` : '—' }}</template></el-table-column>
         <el-table-column prop="educationLevel" label="Education" width="120" />
-        <el-table-column label="Skills" min-width="160">
-          <template #default="{ row }">
-            {{ row.skills?.length ? row.skills.join(', ') : '—' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="Tags" width="120">
-          <template #default="{ row }">
-            <el-tag v-for="t in row.tags" :key="t" size="small" class="tag-pill">{{ t }}</el-tag>
-            <span v-if="!row.tags?.length">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="createdAt" label="Created" width="180">
-          <template #default="{ row }">
-            {{ new Date(row.createdAt).toLocaleString() }}
-          </template>
-        </el-table-column>
+        <el-table-column label="Skills" min-width="160"><template #default="{ row }">{{ row.skills?.length ? row.skills.join(', ') : '—' }}</template></el-table-column>
+        <el-table-column label="Tags" width="140"><template #default="{ row }"><el-tag v-for="t in row.tags" :key="t" size="small" class="tag-pill">{{ t }}</el-tag><span v-if="!row.tags?.length">—</span></template></el-table-column>
+        <el-table-column prop="createdAt" label="Created" width="180"><template #default="{ row }">{{ new Date(row.createdAt).toLocaleString() }}</template></el-table-column>
         <el-table-column label="Actions" width="104" fixed="right" align="center">
           <template #default="{ row }">
             <div class="action-icons">
-              <el-tooltip content="Match" placement="top">
-                <el-button link type="success" aria-label="Match" @click="openMatch(row)">M</el-button>
-              </el-tooltip>
-              <el-tooltip content="Rename" placement="top">
-                <el-button
-                  link
-                  type="primary"
-                  :icon="EditPen"
-                  aria-label="Rename"
-                  @click="quickEdit(row)"
-                />
-              </el-tooltip>
-              <el-tooltip content="Remove" placement="top">
-                <el-button
-                  link
-                  type="danger"
-                  :icon="Delete"
-                  aria-label="Remove"
-                  @click="confirmDelete(row)"
-                />
-              </el-tooltip>
+              <el-button link type="success" aria-label="Match" @click="openMatch(row)">M</el-button>
+              <el-button link type="primary" :icon="EditPen" aria-label="Edit" @click="openEdit(row)" />
+              <el-button link type="danger" :icon="Delete" aria-label="Remove" @click="confirmDelete(row)" />
             </div>
           </template>
         </el-table-column>
       </el-table>
-      <div class="rec-pager">
-        <el-pagination
-          background
-          layout="prev, pager, next, total"
-          :total="total"
-          :page-size="pageSize"
-          :current-page="page"
-          @current-change="onPageChange"
-        />
-      </div>
+      <div class="rec-pager"><el-pagination background layout="prev, pager, next, total" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" /></div>
     </el-card>
 
     <el-card class="rec-card" shadow="never">
-      <template #header>
-        <div class="card-head">
-          <span>Duplicate candidates</span>
-          <el-button link type="primary" @click="loadDuplicates">Refresh</el-button>
-        </div>
-      </template>
+      <template #header><div class="card-head"><span>Duplicate candidates (auto-merged on create/import)</span><el-button link type="primary" @click="loadDuplicates">Refresh</el-button></div></template>
       <el-table v-loading="duplicateLoading" :data="duplicates" stripe empty-text="No duplicates found">
         <el-table-column prop="matchType" label="Type" width="120" />
-        <el-table-column label="Candidate IDs" min-width="420" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ row.candidateIds.join(', ') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="" width="120" align="center">
-          <template #default="{ row }">
-            <el-button size="small" type="warning" @click="mergeGroup(row)">Merge</el-button>
-          </template>
-        </el-table-column>
+        <el-table-column label="Candidate IDs" min-width="420" show-overflow-tooltip><template #default="{ row }">{{ row.candidateIds.join(', ') }}</template></el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="New candidate" width="420px" destroy-on-close>
+    <el-dialog v-model="createVisible" title="New candidate" width="440px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="Name" required>
-          <el-input v-model="formName" placeholder="Full name" />
-        </el-form-item>
-        <el-form-item label="Experience (years)">
-          <el-input-number v-model="formExp" :min="0" :max="60" controls-position="right" />
-        </el-form-item>
-        <el-form-item label="Education level">
-          <el-input v-model="formEdu" placeholder="e.g. Bachelor" />
-        </el-form-item>
-        <el-form-item label="Skills (comma-separated)">
-          <el-input v-model="formSkills" placeholder="GMP, QA" />
+        <el-form-item label="Name" required><el-input v-model="formName" placeholder="Full name" /></el-form-item>
+        <el-form-item label="Experience (years)"><el-input-number v-model="formExp" :min="0" :max="60" controls-position="right" /></el-form-item>
+        <el-form-item label="Education level"><el-input v-model="formEdu" placeholder="e.g. Bachelor" /></el-form-item>
+        <el-form-item label="Skills (comma-separated)"><el-input v-model="formSkills" placeholder="GMP, QA" /></el-form-item>
+        <el-form-item label="Tags (comma-separated)"><el-input v-model="formTags" placeholder="priority, referral" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="createVisible = false">Cancel</el-button><el-button type="primary" :loading="createSaving" @click="submitCreate">Create</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="editVisible" title="Edit candidate" width="560px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="Name" required><el-input v-model="editName" /></el-form-item>
+        <el-form-item label="Phone"><el-input v-model="editPhone" placeholder="Requires recruitment.view_pii to reveal existing value" /></el-form-item>
+        <el-form-item label="ID number"><el-input v-model="editIDNumber" /></el-form-item>
+        <el-form-item label="Email"><el-input v-model="editEmail" /></el-form-item>
+        <el-form-item label="Experience years"><el-input-number v-model="editExp" :min="0" :max="60" controls-position="right" /></el-form-item>
+        <el-form-item label="Education level"><el-input v-model="editEdu" /></el-form-item>
+        <el-form-item label="Skills (comma-separated)"><el-input v-model="editSkills" /></el-form-item>
+        <el-form-item label="Tags (comma-separated)"><el-input v-model="editTags" /></el-form-item>
+        <el-form-item label="Custom fields">
+          <div class="kv-wrap">
+            <div v-for="(row, idx) in editCustomFields" :key="idx" class="kv-row">
+              <el-input v-model="row.key" placeholder="key" />
+              <el-input v-model="row.value" placeholder="value" />
+              <el-button link type="danger" @click="editCustomFields.splice(idx, 1)">Remove</el-button>
+            </div>
+            <el-button link type="primary" @click="editCustomFields.push({ key: '', value: '' })">+ Add field</el-button>
+          </div>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="dialogSaving" @click="submitCreate">Create</el-button>
-      </template>
+      <template #footer><el-button @click="editVisible = false">Cancel</el-button><el-button type="primary" :loading="editSaving" @click="submitEdit">Save</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="importVisible" title="Bulk import candidates" width="720px" destroy-on-close>
-      <p class="muted">Paste JSON array rows (name, skills, educationLevel, experienceYears, etc.).</p>
+      <p class="muted">Paste JSON array rows (name, contact, skills, tags, customFields).</p>
       <el-input v-model="importRowsText" type="textarea" :rows="14" />
-      <template #footer>
-        <el-button @click="importVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="importSaving" @click="commitImport">Create & commit</el-button>
-      </template>
+      <template #footer><el-button @click="importVisible = false">Cancel</el-button><el-button type="primary" :loading="importSaving" @click="commitImport">Create & commit</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="matchVisible" title="Match and recommendations" width="760px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="Candidate ID">
-          <el-input v-model="matchCandidateId" readonly />
-        </el-form-item>
-        <el-form-item label="Position">
-          <el-select v-model="matchPositionId" placeholder="Select position" style="width: 100%">
-            <el-option v-for="p in positions" :key="p.id" :label="p.title" :value="p.id" />
-          </el-select>
-        </el-form-item>
+        <el-form-item label="Candidate ID"><el-input v-model="matchCandidateId" readonly /></el-form-item>
+        <el-form-item label="Position"><el-select v-model="matchPositionId" placeholder="Select position" style="width: 100%"><el-option v-for="p in positions" :key="p.id" :label="p.title" :value="p.id" /></el-select></el-form-item>
       </el-form>
       <el-button type="primary" :loading="matching" @click="runMatch">Run match</el-button>
-
       <div v-if="matchResult" class="match-panel">
         <p><strong>Score:</strong> {{ matchResult.score }} / 100</p>
-        <p>
-          <strong>Breakdown:</strong> skills {{ matchResult.breakdown.skills }}, experience
-          {{ matchResult.breakdown.experience }}, education {{ matchResult.breakdown.education }}
-        </p>
-        <ul>
-          <li v-for="r in matchResult.reasons" :key="r">{{ r }}</li>
-        </ul>
+        <p><strong>Breakdown:</strong> skills {{ matchResult.breakdown.skills }}, experience {{ matchResult.breakdown.experience }}, education {{ matchResult.breakdown.education }}</p>
+        <ul><li v-for="r in matchResult.reasons" :key="r">{{ r }}</li></ul>
         <p><strong>Similar candidates:</strong> {{ similarCandidates.map((c) => c.name).join(', ') || '—' }}</p>
         <p><strong>Similar positions:</strong> {{ similarPositions.map((p) => p.title).join(', ') || '—' }}</p>
       </div>
-      <template #footer>
-        <el-button @click="matchVisible = false">Close</el-button>
-      </template>
+      <template #footer><el-button @click="matchVisible = false">Close</el-button></template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.rec-page {
-  max-width: 1200px;
-}
-.rec-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.tool-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-.rec-title {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-.rec-filters {
-  border-radius: 14px;
-  border: 1px solid var(--el-border-color-lighter);
-  margin-bottom: 1rem;
-}
-.rec-card {
-  border-radius: 14px;
-  border: 1px solid var(--el-border-color-lighter);
-}
-.rec-pager {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 1rem;
-}
-.tag-pill {
-  margin-right: 4px;
-}
-
-.action-icons {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.match-panel {
-  margin-top: 1rem;
-  border-top: 1px solid var(--el-border-color-lighter);
-  padding-top: 0.75rem;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-}
+.rec-page { max-width: 1200px; }
+.rec-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.tool-actions { display: flex; gap: 0.5rem; }
+.rec-title { margin: 0; font-size: 1.25rem; font-weight: 650; letter-spacing: -0.02em; }
+.rec-filters { border-radius: 14px; border: 1px solid var(--el-border-color-lighter); margin-bottom: 1rem; }
+.rec-card { border-radius: 14px; border: 1px solid var(--el-border-color-lighter); margin-bottom: 1rem; }
+.rec-pager { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.tag-pill { margin-right: 4px; }
+.action-icons { display: inline-flex; align-items: center; gap: 2px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; }
+.match-panel { margin-top: 1rem; border-top: 1px solid var(--el-border-color-lighter); padding-top: 0.75rem; }
+.muted { color: var(--el-text-color-secondary); }
+.kv-wrap { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.kv-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
 </style>

@@ -178,6 +178,20 @@ function expiringIds(): Set<string> {
   return new Set(expiringSoon.value.map((r) => r.id))
 }
 
+function isExpired(row: QualRow): boolean {
+  if (!row.expiresOn) return false
+  const today = new Date().toISOString().slice(0, 10)
+  return row.expiresOn < today
+}
+
+function isExpiringSoon(row: QualRow): boolean {
+  return expiringIds().has(row.id)
+}
+
+function tableRowClassName({ row }: { row: QualRow }): string {
+  return isExpired(row) || isExpiringSoon(row) ? 'qual-danger-row' : ''
+}
+
 onMounted(async () => {
   await loadExpiring()
   await load()
@@ -202,7 +216,7 @@ onMounted(async () => {
     />
 
     <el-card class="rec-card" shadow="never">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No qualifications to show">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No qualifications to show" :row-class-name="tableRowClassName">
         <el-table-column prop="displayName" label="Client / name" min-width="220">
           <template #default="{ row }">
             <div class="qual-name">{{ row.displayName }}</div>
@@ -218,13 +232,14 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="expiresOn" label="Expires" width="120">
           <template #default="{ row }">
-            <span v-if="row.expiresOn">{{ row.expiresOn }}</span>
+            <span v-if="row.expiresOn" :class="{ 'danger-text': isExpired(row) || isExpiringSoon(row) }">{{ row.expiresOn }}</span>
             <span v-else>—</span>
           </template>
         </el-table-column>
         <el-table-column label="" width="100">
           <template #default="{ row }">
-            <el-tag v-if="expiringIds().has(row.id)" type="warning" size="small">Soon</el-tag>
+            <el-tag v-if="isExpired(row)" type="danger" size="small">Expired</el-tag>
+            <el-tag v-else-if="isExpiringSoon(row)" type="danger" size="small">Soon</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="updatedAt" label="Updated" width="180">
@@ -340,5 +355,12 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+:deep(.qual-danger-row td) {
+  background: color-mix(in srgb, var(--el-color-danger-light-9) 70%, white);
+}
+.danger-text {
+  color: var(--el-color-danger);
+  font-weight: 600;
 }
 </style>

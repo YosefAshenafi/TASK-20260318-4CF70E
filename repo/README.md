@@ -2,6 +2,15 @@
 
 Run and verify everything through **Docker** from this directory (`repo/`).
 
+## Default Login (Development)
+
+Use the seeded development account to access the app:
+
+- Username: `admin`
+- Password: `password`
+
+These credentials are created by migrations and are intended for local development only.
+
 ## Stack
 
 ```bash
@@ -9,7 +18,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API; dev seed `admin` / `password` after migrations)
+- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API)
 - **API:** http://127.0.0.1:8080/api/v1/health (proxied through Nginx; direct container port 8080 on `pharmaops-api`)
 - **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
 

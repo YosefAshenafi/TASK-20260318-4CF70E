@@ -35,24 +35,24 @@ type MatchScoreDTO struct {
 
 // ImportBatchDTO is returned for import batch APIs.
 type ImportBatchDTO struct {
-	ID                   string          `json:"id"`
-	InstitutionID        string          `json:"institutionId"`
-	DepartmentID         *string         `json:"departmentId,omitempty"`
-	TeamID               *string         `json:"teamId,omitempty"`
-	Status               string          `json:"status"`
-	ValidationReport     json.RawMessage `json:"validationReport,omitempty"`
-	CreatedByUserID      string          `json:"createdByUserId"`
-	CommittedAt          *string         `json:"committedAt,omitempty"`
-	CreatedAt            string          `json:"createdAt"`
+	ID               string          `json:"id"`
+	InstitutionID    string          `json:"institutionId"`
+	DepartmentID     *string         `json:"departmentId,omitempty"`
+	TeamID           *string         `json:"teamId,omitempty"`
+	Status           string          `json:"status"`
+	ValidationReport json.RawMessage `json:"validationReport,omitempty"`
+	CreatedByUserID  string          `json:"createdByUserId"`
+	CommittedAt      *string         `json:"committedAt,omitempty"`
+	CreatedAt        string          `json:"createdAt"`
 }
 
 // MergeHistoryDTO is one merge record.
 type MergeHistoryDTO struct {
-	ID               string          `json:"id"`
-	BaseCandidateID  string          `json:"baseCandidateId"`
-	SourceCandidateIDs []string      `json:"sourceCandidateIds"`
-	OperatorUserID   string          `json:"operatorUserId"`
-	CreatedAt        string          `json:"createdAt"`
+	ID                 string   `json:"id"`
+	BaseCandidateID    string   `json:"baseCandidateId"`
+	SourceCandidateIDs []string `json:"sourceCandidateIds"`
+	OperatorUserID     string   `json:"operatorUserId"`
+	CreatedAt          string   `json:"createdAt"`
 }
 
 // DuplicateGroupDTO lists candidates sharing the same phone or ID number.
@@ -166,7 +166,7 @@ func (s *RecruitmentService) GetImportBatch(ctx context.Context, p *access.Princ
 }
 
 // CommitImportBatch creates candidates from a pending batch.
-func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Principal, id string) (*ImportBatchDTO, error) {
+func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Principal, id, operatorUserID string) (*ImportBatchDTO, error) {
 	if err := requireScope(p); err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Pr
 			Skills:          row.Skills,
 			Tags:            row.Tags,
 			CustomFields:    row.CustomFields,
-		}, GetCandidateOpts{})
+		}, GetCandidateOpts{OperatorUserID: operatorUserID})
 		if err != nil {
 			return nil, err
 		}
@@ -263,12 +263,21 @@ func (s *RecruitmentService) MergeCandidates(ctx context.Context, p *access.Prin
 	if strategy == "" {
 		strategy = "latest_wins_fill_missing"
 	}
+	base, err := s.repo.GetCandidate(ctx, in.BaseCandidateID, p)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.MergeIntoBase(ctx, in.BaseCandidateID, in.SourceCandidateIDs, p, userID, strategy); err != nil {
 		return err
 	}
 	op := meta
 	if op.OperatorUserID == "" {
 		op.OperatorUserID = userID
+	}
+	if op.InstitutionID == nil {
+		op.InstitutionID = &base.InstitutionID
+		op.DepartmentID = base.DepartmentID
+		op.TeamID = base.TeamID
 	}
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
 		Module:     "recruitment",
@@ -279,8 +288,11 @@ func (s *RecruitmentService) MergeCandidates(ctx context.Context, p *access.Prin
 			"sourceCandidateIds": in.SourceCandidateIDs,
 		},
 		After: map[string]any{
-			"strategy": strategy,
-			"merged":   true,
+			"strategy":      strategy,
+			"merged":        true,
+			"institutionId": base.InstitutionID,
+			"departmentId":  base.DepartmentID,
+			"teamId":        base.TeamID,
 		},
 		Meta: op,
 	})

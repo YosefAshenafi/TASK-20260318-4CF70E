@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -62,6 +63,38 @@ func (h *RecruitmentHandler) ListCandidates(c *gin.Context) {
 		if n, err := strconv.Atoi(v); err == nil {
 			search.MaxExperience = &n
 		}
+	}
+	if v := c.Query("createdFrom"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "createdFrom must be RFC3339")
+			return
+		}
+		search.CreatedFrom = &t
+	}
+	if v := c.Query("createdTo"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "createdTo must be RFC3339")
+			return
+		}
+		search.CreatedTo = &t
+	}
+	if v := c.Query("updatedFrom"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "updatedFrom must be RFC3339")
+			return
+		}
+		search.UpdatedFrom = &t
+	}
+	if v := c.Query("updatedTo"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "updatedTo must be RFC3339")
+			return
+		}
+		search.UpdatedTo = &t
 	}
 
 	items, total, page, pageSize, err := h.svc.ListCandidates(c.Request.Context(), pr, page, pageSize, offset, sortBy, sortOrder, search)
@@ -168,6 +201,8 @@ type patchCandidateBody struct {
 	Email           *string        `json:"email"`
 	ExperienceYears *int           `json:"experienceYears"`
 	EducationLevel  *string        `json:"educationLevel"`
+	Skills          *[]string      `json:"skills"`
+	Tags            *[]string      `json:"tags"`
 	CustomFields    map[string]any `json:"customFields"`
 }
 
@@ -192,6 +227,8 @@ func (h *RecruitmentHandler) PatchCandidate(c *gin.Context) {
 		Email:           body.Email,
 		ExperienceYears: body.ExperienceYears,
 		EducationLevel:  body.EducationLevel,
+		Skills:          body.Skills,
+		Tags:            body.Tags,
 		CustomFields:    body.CustomFields,
 	}, recruitmentPIIAuditOpts(c))
 	if errors.Is(err, service.ErrForbiddenScope) {
@@ -374,7 +411,7 @@ func (h *RecruitmentHandler) CreateImportBatch(c *gin.Context) {
 	}
 	uid := c.GetString("userID")
 	var body struct {
-		InstitutionID string                      `json:"institutionId" binding:"required"`
+		InstitutionID string                     `json:"institutionId" binding:"required"`
 		Rows          []service.ImportStagingRow `json:"rows" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -426,8 +463,13 @@ func (h *RecruitmentHandler) CommitImportBatch(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
+	uid := c.GetString("userID")
+	if uid == "" {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing user")
+		return
+	}
 	id := c.Param("importId")
-	dto, err := h.svc.CommitImportBatch(c.Request.Context(), pr, id)
+	dto, err := h.svc.CommitImportBatch(c.Request.Context(), pr, id, uid)
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "no institution scope")
 		return

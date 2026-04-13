@@ -176,6 +176,11 @@ Candidate DTO (response shape):
 }
 ```
 
+Candidate list filters (`GET /recruitment/candidates`) include:
+
+- `keyword`, `skills`, `educationLevel`, `minExperience`, `maxExperience`
+- `createdFrom`, `createdTo`, `updatedFrom`, `updatedTo` (RFC3339)
+
 Match score DTO:
 
 ```ts
@@ -198,6 +203,30 @@ Merge request DTO:
   sourceCandidateIds: string[];
   strategy: 'latest_wins_fill_missing';
   manualOverrides?: Record<string, unknown>;
+}
+```
+
+Duplicate handling policy:
+
+- Candidate create/import paths run deterministic duplicate auto-merge when normalized phone or ID matches.
+- Strategy is `latest_wins_fill_missing` (newest row as base; fill missing fields; union skills/tags).
+- Merge history is persisted in `candidate_merge_history` and an audit mutation is emitted.
+
+Candidate PATCH request supports structured updates for contact and profile fields:
+
+```ts
+{
+  name?: string;
+  departmentId?: string | null;
+  teamId?: string | null;
+  phone?: string;
+  idNumber?: string;
+  email?: string;
+  experienceYears?: number;
+  educationLevel?: string;
+  skills?: string[];
+  tags?: string[];
+  customFields?: Record<string, unknown>;
 }
 ```
 
@@ -395,6 +424,7 @@ These are not public user-facing endpoints except optional admin manual triggers
 - Passwords are stored as bcrypt hashes; never returned by APIs.
 - `phone` and `idNumber` are encrypted at rest with AES-256.
 - List responses return masked PII; full PII requires explicit elevated permission.
+- Audit list/export responses must not expose plaintext candidate PII to users without `recruitment.view_pii`.
 - All permission changes and key business field changes must emit append-only audit logs.
 
 ## Persistence Contract Baseline

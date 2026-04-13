@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,7 +138,7 @@ func parseJSONObj(b []byte) map[string]any {
 	return m
 }
 
-func toAuditLogDTO(a *model.AuditLog) AuditLogDTO {
+func toAuditLogDTO(a *model.AuditLog, canViewRecruitmentPII bool) AuditLogDTO {
 	dto := AuditLogDTO{
 		ID:         a.ID,
 		Module:     a.Module,
@@ -155,6 +156,10 @@ func toAuditLogDTO(a *model.AuditLog) AuditLogDTO {
 	}
 	dto.Before = parseJSONObj(a.BeforeJSON)
 	dto.After = parseJSONObj(a.AfterJSON)
+	if !canViewRecruitmentPII {
+		dto.Before = sanitizeRecruitmentAuditPayload(a.Module, a.TargetType, dto.Before)
+		dto.After = sanitizeRecruitmentAuditPayload(a.Module, a.TargetType, dto.After)
+	}
 	return dto
 }
 
@@ -169,6 +174,114 @@ func auditLogOrder(sortBy, sortOrder string) string {
 		order = "ASC"
 	}
 	return col + " " + order
+}
+
+var recruitmentPIIKeys = map[string]struct{}{
+	"phone":         {},
+	"idnumber":      {},
+	"email":         {},
+	"phoneenc":      {},
+	"idnumberenc":   {},
+	"emailenc":      {},
+	"phone_enc":     {},
+	"id_number_enc": {},
+	"email_enc":     {},
+}
+
+const auditPIIRedacted = "[REDACTED]"
+
+func sanitizeRecruitmentAuditPayload(module, targetType string, payload map[string]any) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	if module != "recruitment" || targetType != "candidate" {
+		return payload
+	}
+	out := make(map[string]any, len(payload))
+	for k, v := range payload {
+		normalizedKey := strings.ToLower(strings.ReplaceAll(k, "-", ""))
+		normalizedKey = strings.ReplaceAll(normalizedKey, " ", "")
+		if _, ok := recruitmentPIIKeys[normalizedKey]; ok {
+			out[k] = auditPIIRedacted
+			continue
+		}
+		out[k] = sanitizeRecruitmentAuditValue(v)
+	}
+	return out
+}
+
+func sanitizeRecruitmentAuditValue(v any) any {
+	switch tv := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(tv))
+		for k, vv := range tv {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "-", ""))
+			normalizedKey = strings.ReplaceAll(normalizedKey, " ", "")
+			if _, ok := recruitmentPIIKeys[normalizedKey]; ok {
+				out[k] = auditPIIRedacted
+				continue
+			}
+			out[k] = sanitizeRecruitmentAuditValue(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(tv))
+		for _, item := range tv {
+			out = append(out, sanitizeRecruitmentAuditValue(item))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func payloadStringValue(payload map[string]any, keys ...string) string {
+	if payload == nil {
+		return ""
+	}
+	for _, key := range keys {
+		v, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func pointerOrNil(v string) *string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	x := strings.TrimSpace(v)
+	return &x
+}
+
+func inferScopeFromPayload(before, after map[string]any) (institutionID, departmentID, teamID *string) {
+	inst := payloadStringValue(after, "institutionId", "institution_id")
+	if inst == "" {
+		inst = payloadStringValue(before, "institutionId", "institution_id")
+	}
+	dept := payloadStringValue(after, "departmentId", "department_id")
+	if dept == "" {
+		dept = payloadStringValue(before, "departmentId", "department_id")
+	}
+	team := payloadStringValue(after, "teamId", "team_id")
+	if team == "" {
+		team = payloadStringValue(before, "teamId", "team_id")
+	}
+	return pointerOrNil(inst), pointerOrNil(dept), pointerOrNil(team)
+}
+
+func requiresScopedBusinessAudit(module string) bool {
+	switch module {
+	case "recruitment", "compliance", "cases", "files", "fees":
+		return true
+	default:
+		return false
+	}
 }
 
 // ListAuditLogsInput holds query filters.
@@ -220,17 +333,19 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 	if in.Module == "" || in.Operation == "" || in.TargetType == "" || in.TargetID == "" {
 		return nil
 	}
+	beforeForAudit := sanitizeRecruitmentAuditPayload(in.Module, in.TargetType, in.Before)
+	afterInput := sanitizeRecruitmentAuditPayload(in.Module, in.TargetType, in.After)
 	var beforeJSON, afterJSON []byte
 	var err error
-	if len(in.Before) > 0 {
-		if beforeJSON, err = json.Marshal(in.Before); err != nil {
+	if len(beforeForAudit) > 0 {
+		if beforeJSON, err = json.Marshal(beforeForAudit); err != nil {
 			return err
 		}
 	}
-	afterForAudit := in.After
-	if len(in.Before) > 0 && len(in.After) > 0 {
-		if changed := mutationChangedKeys(in.Before, in.After); len(changed) > 0 {
-			afterForAudit = maps.Clone(in.After)
+	afterForAudit := afterInput
+	if len(beforeForAudit) > 0 && len(afterInput) > 0 {
+		if changed := mutationChangedKeys(beforeForAudit, afterInput); len(changed) > 0 {
+			afterForAudit = maps.Clone(afterInput)
 			afterForAudit["_changedFields"] = changed
 		}
 	}
@@ -239,14 +354,33 @@ func (s *AuditService) LogMutation(ctx context.Context, in AuditMutationInput) e
 			return err
 		}
 	}
+	institutionID := in.Meta.InstitutionID
+	departmentID := in.Meta.DepartmentID
+	teamID := in.Meta.TeamID
+	if institutionID == nil || *institutionID == "" {
+		ii, dd, tt := inferScopeFromPayload(beforeForAudit, afterForAudit)
+		if ii != nil {
+			institutionID = ii
+		}
+		if dd != nil {
+			departmentID = dd
+		}
+		if tt != nil {
+			teamID = tt
+		}
+	}
+	// Business events must carry an explicit data scope to prevent null-scope leakage.
+	if requiresScopedBusinessAudit(in.Module) && (institutionID == nil || *institutionID == "") {
+		return nil
+	}
 	row := &model.AuditLog{
 		ID:             uuid.NewString(),
 		Module:         in.Module,
 		Operation:      in.Operation,
 		OperatorUserID: in.Meta.OperatorUserID,
-		InstitutionID:  in.Meta.InstitutionID,
-		DepartmentID:   in.Meta.DepartmentID,
-		TeamID:         in.Meta.TeamID,
+		InstitutionID:  institutionID,
+		DepartmentID:   departmentID,
+		TeamID:         teamID,
 		TargetType:     in.TargetType,
 		TargetID:       in.TargetID,
 		BeforeJSON:     beforeJSON,
@@ -268,8 +402,9 @@ func (s *AuditService) ListAuditLogs(ctx context.Context, p *access.Principal, p
 		return nil, 0, page, pageSize, err
 	}
 	out := make([]AuditLogDTO, 0, len(rows))
+	canViewRecruitmentPII := p != nil && p.Has(permissionRecruitmentViewPII)
 	for i := range rows {
-		out = append(out, toAuditLogDTO(&rows[i]))
+		out = append(out, toAuditLogDTO(&rows[i], canViewRecruitmentPII))
 	}
 	return out, total, page, pageSize, nil
 }

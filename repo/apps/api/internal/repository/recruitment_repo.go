@@ -58,6 +58,10 @@ type CandidateFilter struct {
 	EducationLevel string
 	MinExperience  *int
 	MaxExperience  *int
+	CreatedFrom    *time.Time
+	CreatedTo      *time.Time
+	UpdatedFrom    *time.Time
+	UpdatedTo      *time.Time
 }
 
 func applyCandidateFilters(q *gorm.DB, f CandidateFilter) *gorm.DB {
@@ -73,6 +77,18 @@ func applyCandidateFilters(q *gorm.DB, f CandidateFilter) *gorm.DB {
 	}
 	if f.MaxExperience != nil {
 		q = q.Where("experience_years <= ?", *f.MaxExperience)
+	}
+	if f.CreatedFrom != nil {
+		q = q.Where("created_at >= ?", *f.CreatedFrom)
+	}
+	if f.CreatedTo != nil {
+		q = q.Where("created_at < ?", *f.CreatedTo)
+	}
+	if f.UpdatedFrom != nil {
+		q = q.Where("updated_at >= ?", *f.UpdatedFrom)
+	}
+	if f.UpdatedTo != nil {
+		q = q.Where("updated_at < ?", *f.UpdatedTo)
 	}
 	if len(f.Skills) > 0 {
 		sub := q.Session(&gorm.Session{}).Model(&model.CandidateSkill{}).
@@ -173,6 +189,57 @@ func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Ca
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func (r *RecruitmentRepository) ReplaceCandidateSkills(ctx context.Context, candidateID string, skills []string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("candidate_id = ?", candidateID).Delete(&model.CandidateSkill{}).Error; err != nil {
+			return err
+		}
+		seen := map[string]struct{}{}
+		for _, name := range skills {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			row := model.CandidateSkill{
+				ID:          uuid.NewString(),
+				CandidateID: candidateID,
+				SkillName:   name,
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *RecruitmentRepository) ReplaceCandidateTags(ctx context.Context, candidateID string, tags []string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("candidate_id = ?", candidateID).Delete(&model.CandidateTag{}).Error; err != nil {
+			return err
+		}
+		seen := map[string]struct{}{}
+		for _, tag := range tags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			if err := tx.Create(&model.CandidateTag{CandidateID: candidateID, Tag: tag}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *RecruitmentRepository) SoftDeleteCandidate(ctx context.Context, id string, p *access.Principal) error {
@@ -392,6 +459,40 @@ HAVING COUNT(*) > 1
 			InstitutionID: r0.InstitutionID,
 			CandidateIDs:  ids,
 		})
+	}
+	return out, nil
+}
+
+// FindDuplicateCandidateIDsByHash returns in-scope duplicate IDs (excluding current candidate) by phone/id hashes.
+func (r *RecruitmentRepository) FindDuplicateCandidateIDsByHash(ctx context.Context, pr *access.Principal, institutionID, excludeID string, phoneNormHash, idNormHash *string) ([]string, error) {
+	if institutionID == "" {
+		return nil, nil
+	}
+	q := r.db.WithContext(ctx).Model(&model.Candidate{}).
+		Where("institution_id = ? AND deleted_at IS NULL AND id <> ?", institutionID, excludeID)
+	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
+
+	var disj []string
+	var args []any
+	if phoneNormHash != nil && *phoneNormHash != "" {
+		disj = append(disj, "phone_norm_hash = ?")
+		args = append(args, *phoneNormHash)
+	}
+	if idNormHash != nil && *idNormHash != "" {
+		disj = append(disj, "id_number_norm_hash = ?")
+		args = append(args, *idNormHash)
+	}
+	if len(disj) == 0 {
+		return nil, nil
+	}
+	q = q.Where("("+strings.Join(disj, " OR ")+")", args...)
+	var rows []model.Candidate
+	if err := q.Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.ID)
 	}
 	return out, nil
 }

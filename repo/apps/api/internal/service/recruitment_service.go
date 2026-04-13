@@ -331,6 +331,10 @@ type CandidateSearchParams struct {
 	EducationLevel string
 	MinExperience  *int
 	MaxExperience  *int
+	CreatedFrom    *time.Time
+	CreatedTo      *time.Time
+	UpdatedFrom    *time.Time
+	UpdatedTo      *time.Time
 }
 
 // ListCandidates returns paginated candidates in scope with optional filters.
@@ -344,6 +348,10 @@ func (s *RecruitmentService) ListCandidates(ctx context.Context, p *access.Princ
 		EducationLevel: search.EducationLevel,
 		MinExperience:  search.MinExperience,
 		MaxExperience:  search.MaxExperience,
+		CreatedFrom:    search.CreatedFrom,
+		CreatedTo:      search.CreatedTo,
+		UpdatedFrom:    search.UpdatedFrom,
+		UpdatedTo:      search.UpdatedTo,
 	})
 	if err != nil {
 		return nil, 0, page, pageSize, err
@@ -395,6 +403,31 @@ type CreateCandidateInput struct {
 	Skills          []string
 	Tags            []string
 	CustomFields    map[string]any
+}
+
+// autoMergeOnDuplicate deterministically merges duplicate candidates on create/import:
+// newest record remains base, source rows are merged with fill-missing policy.
+func (s *RecruitmentService) autoMergeOnDuplicate(ctx context.Context, p *access.Principal, candidateID string, institutionID string, phoneNormHash, idNormHash *string, opts GetCandidateOpts) error {
+	if s == nil || s.repo == nil {
+		return nil
+	}
+	if opts.OperatorUserID == "" {
+		return nil
+	}
+	ids, err := s.repo.FindDuplicateCandidateIDsByHash(ctx, p, institutionID, candidateID, phoneNormHash, idNormHash)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	meta := opts.AuditMeta()
+	// Create path guarantees candidateID is newest, so keep it as deterministic merge base.
+	return s.MergeCandidates(ctx, p, opts.OperatorUserID, MergeCandidatesInput{
+		BaseCandidateID:    candidateID,
+		SourceCandidateIDs: ids,
+		Strategy:           "latest_wins_fill_missing",
+	}, meta)
 }
 
 func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Principal, in CreateCandidateInput, opts GetCandidateOpts) (*CandidateDTO, error) {
@@ -477,6 +510,9 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	if err := s.repo.CreateCandidate(ctx, c, skills, tags); err != nil {
 		return nil, err
 	}
+	if err := s.autoMergeOnDuplicate(ctx, p, c.ID, c.InstitutionID, c.PhoneNormHash, c.IDNumberNormHash, opts); err != nil {
+		return nil, err
+	}
 	loaded, err := s.repo.GetCandidate(ctx, c.ID, p)
 	if err != nil {
 		return nil, err
@@ -487,13 +523,17 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	}
 	dto := s.candidateDTO(loaded, tagMap[c.ID], s.revealFullPII(p))
 	s.maybeAuditPIIRead(ctx, p, c.ID, &dto, opts)
+	meta := opts.AuditMeta()
+	meta.InstitutionID = &c.InstitutionID
+	meta.DepartmentID = c.DepartmentID
+	meta.TeamID = c.TeamID
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
 		Module:     "recruitment",
 		Operation:  "candidate.create",
 		TargetType: "candidate",
 		TargetID:   c.ID,
 		After:      DTOToAuditMap(&dto),
-		Meta:       opts.AuditMeta(),
+		Meta:       meta,
 	})
 	return &dto, nil
 }
@@ -508,6 +548,8 @@ type UpdateCandidateInput struct {
 	Email           *string
 	ExperienceYears *int
 	EducationLevel  *string
+	Skills          *[]string
+	Tags            *[]string
 	CustomFields    map[string]any
 }
 
@@ -577,12 +619,26 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 	if err := s.repo.UpdateCandidate(ctx, c, p); err != nil {
 		return nil, err
 	}
+	if in.Skills != nil {
+		if err := s.repo.ReplaceCandidateSkills(ctx, id, *in.Skills); err != nil {
+			return nil, err
+		}
+	}
+	if in.Tags != nil {
+		if err := s.repo.ReplaceCandidateTags(ctx, id, *in.Tags); err != nil {
+			return nil, err
+		}
+	}
 	afterC, err := s.repo.GetCandidate(ctx, id, p)
 	if err != nil {
 		return nil, err
 	}
 	afterTags, _ := s.repo.TagsForCandidates(ctx, []string{id})
 	afterMap := DTOToAuditMap(s.candidateDTO(afterC, afterTags[id], false))
+	meta := opts.AuditMeta()
+	meta.InstitutionID = &afterC.InstitutionID
+	meta.DepartmentID = afterC.DepartmentID
+	meta.TeamID = afterC.TeamID
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
 		Module:     "recruitment",
 		Operation:  "candidate.update",
@@ -590,7 +646,7 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 		TargetID:   id,
 		Before:     beforeMap,
 		After:      afterMap,
-		Meta:       opts.AuditMeta(),
+		Meta:       meta,
 	})
 	return s.GetCandidate(ctx, p, id, opts)
 }
@@ -607,6 +663,11 @@ func (s *RecruitmentService) DeleteCandidate(ctx context.Context, p *access.Prin
 	beforeMap := DTOToAuditMap(s.candidateDTO(beforeC, tags[id], false))
 	if err := s.repo.SoftDeleteCandidate(ctx, id, p); err != nil {
 		return err
+	}
+	if meta.InstitutionID == nil {
+		meta.InstitutionID = &beforeC.InstitutionID
+		meta.DepartmentID = beforeC.DepartmentID
+		meta.TeamID = beforeC.TeamID
 	}
 	_ = s.audit.LogMutation(ctx, AuditMutationInput{
 		Module:     "recruitment",
