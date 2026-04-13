@@ -21,7 +21,7 @@ const menuItems: MenuItem[] = [
   { index: '/cases', label: 'Cases', permission: 'cases.view' },
   { index: '/files', label: 'Files', permission: 'files.view' },
   { index: '/audit-logs', label: 'Audit logs', permission: 'audit.view' },
-  { index: '/system/rbac', label: 'RBAC', permission: 'system.rbac' },
+  { index: '/system/rbac', label: 'Roles & permissions', permission: 'system.rbac' },
 ]
 
 const visibleMenuItems = computed(() =>

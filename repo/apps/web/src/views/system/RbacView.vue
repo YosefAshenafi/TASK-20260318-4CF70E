@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
 import { DEV_DEPARTMENT_ID, DEV_INSTITUTION_ID, DEV_TEAM_ID } from '@/config/devSeed'
+import { humanizeScopeKeyLabel, humanizeTechnicalLabel } from '@/utils/display'
 
 type UserRow = {
   id: string
@@ -54,6 +55,19 @@ const PRIMARY_ROLE_SLUGS = new Set([
 
 function isPrimaryRole(slug: string): boolean {
   return PRIMARY_ROLE_SLUGS.has(slug)
+}
+
+function roleDisplayName(slug: string): string {
+  const ro = roles.value.find((x) => x.slug === slug)
+  return ro?.name?.trim() || humanizeTechnicalLabel(slug)
+}
+
+function permissionOptionLabel(p: PermRow): string {
+  return p.description?.trim() || humanizeTechnicalLabel(p.code)
+}
+
+function scopeOptionLabel(s: ScopeRow): string {
+  return `${humanizeScopeKeyLabel(s.scopeKey)} (${s.institutionId.slice(0, 8)}…)`
 }
 
 const tab = ref<'users' | 'roles' | 'scopes'>('users')
@@ -307,10 +321,14 @@ function openAddRole() {
 }
 
 async function saveAddRole() {
-  const slug = newRoleSlug.value.trim().toLowerCase()
+  const slug = newRoleSlug.value
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_')
   const name = newRoleName.value.trim()
   if (!slug || !name) {
-    ElMessage.warning('Slug and name are required')
+    ElMessage.warning('Short id and display name are required.')
     return
   }
   addRoleSaving.value = true
@@ -420,7 +438,7 @@ onMounted(async () => {
             <el-table-column prop="displayName" label="Display name" width="180" />
             <el-table-column label="Roles" min-width="200">
               <template #default="{ row }">
-                <el-tag v-for="r in row.roles" :key="r" size="small" style="margin: 2px">{{ r }}</el-tag>
+                <el-tag v-for="r in row.roles" :key="r" size="small" style="margin: 2px">{{ roleDisplayName(r) }}</el-tag>
                 <span v-if="!row.roles?.length" class="muted">—</span>
               </template>
             </el-table-column>
@@ -446,9 +464,9 @@ onMounted(async () => {
           <div class="users-toolbar">
             <el-button type="primary" @click="openAddRole">Add role</el-button>
             <span class="muted small">
-              Lists all rows in <code class="mono">roles</code>. Four primary personas — Business Specialist,
-              Compliance Administrator, Recruitment Specialist, System Administrator — are included when the system
-              is first set up and are shown with a Primary badge. Extra roles extend the model as needed.
+              Lists every role. Four primary personas — Business Specialist, Compliance Administrator, Recruitment
+              Specialist, System Administrator — are included when the system is first set up and are shown with a
+              Primary badge. Extra roles extend access as needed.
             </span>
           </div>
           <el-table v-loading="loadingRoles" :data="roles" stripe empty-text="No roles">
@@ -460,8 +478,7 @@ onMounted(async () => {
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column prop="slug" label="Slug" width="200" show-overflow-tooltip />
-            <el-table-column prop="name" label="Name" min-width="160" />
+            <el-table-column prop="name" label="Name" min-width="200" show-overflow-tooltip />
             <el-table-column prop="description" label="Description" min-width="200" show-overflow-tooltip />
             <el-table-column label="Actions" width="200" fixed="right">
               <template #default="{ row }">
@@ -484,7 +501,11 @@ onMounted(async () => {
             </span>
           </div>
           <el-table v-loading="loadingScopes" :data="scopes" stripe empty-text="No scopes">
-            <el-table-column prop="scopeKey" label="Key" min-width="180" />
+            <el-table-column prop="scopeKey" label="Key" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ humanizeScopeKeyLabel(row.scopeKey) }}
+              </template>
+            </el-table-column>
             <el-table-column prop="institutionId" label="Institution" width="200">
               <template #default="{ row }">
                 <span class="mono">{{ row.institutionId }}</span>
@@ -513,7 +534,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="Roles">
           <el-select v-model="newRoleIds" multiple filterable placeholder="Roles" style="width: 100%">
-            <el-option v-for="r in roles" :key="r.id" :label="`${r.slug} — ${r.name}`" :value="r.id" />
+            <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -536,7 +557,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="Roles">
           <el-select v-model="editRoleIds" multiple filterable placeholder="Roles" style="width: 100%">
-            <el-option v-for="r in roles" :key="r.id" :label="`${r.slug} — ${r.name}`" :value="r.id" />
+            <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -557,12 +578,7 @@ onMounted(async () => {
         collapse-tags
         collapse-tags-tooltip
       >
-        <el-option
-          v-for="s in scopes"
-          :key="s.id"
-          :label="`${s.scopeKey} (${s.institutionId.slice(0, 8)}…)`"
-          :value="s.id"
-        />
+        <el-option v-for="s in scopes" :key="s.id" :label="scopeOptionLabel(s)" :value="s.id" />
       </el-select>
       <template #footer>
         <el-button @click="scopeDialogVisible = false">Cancel</el-button>
@@ -572,8 +588,8 @@ onMounted(async () => {
 
     <el-dialog v-model="addRoleVisible" title="Add role" width="480px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="Slug" required>
-          <el-input v-model="newRoleSlug" placeholder="e.g. compliance_specialist" autocomplete="off" />
+        <el-form-item label="Short id" required>
+          <el-input v-model="newRoleSlug" placeholder="e.g. regional-manager" autocomplete="off" />
         </el-form-item>
         <el-form-item label="Display name" required>
           <el-input v-model="newRoleName" autocomplete="off" />
@@ -610,7 +626,7 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="permDialogVisible" :title="`Permissions — ${editingRole?.slug ?? ''}`" width="520px" destroy-on-close>
+    <el-dialog v-model="permDialogVisible" :title="`Permissions — ${editingRole?.name ?? ''}`" width="520px" destroy-on-close>
       <el-select
         v-model="selectedPermIds"
         multiple
@@ -620,7 +636,7 @@ onMounted(async () => {
         collapse-tags
         collapse-tags-tooltip
       >
-        <el-option v-for="p in permissions" :key="p.id" :label="p.code" :value="p.id" />
+        <el-option v-for="p in permissions" :key="p.id" :label="permissionOptionLabel(p)" :value="p.id" />
       </el-select>
       <template #footer>
         <el-button @click="permDialogVisible = false">Cancel</el-button>

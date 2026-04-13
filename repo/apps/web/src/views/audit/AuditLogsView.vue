@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPost } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
+import { humanizeTechnicalLabel } from '@/utils/display'
 
 type AuditRow = {
   id: string
@@ -156,14 +157,26 @@ onMounted(load)
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column prop="module" label="Area" width="110" />
-        <el-table-column prop="operation" label="Operation" width="160" show-overflow-tooltip />
+        <el-table-column prop="module" label="Area" width="130">
+          <template #default="{ row }">
+            {{ humanizeTechnicalLabel(row.module) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="operation" label="Operation" width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ humanizeTechnicalLabel(row.operation) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="operatorId" label="Operator" width="200">
           <template #default="{ row }">
             <span class="mono">{{ row.operatorId }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="targetType" label="Target" width="120" />
+        <el-table-column prop="targetType" label="Target" width="140">
+          <template #default="{ row }">
+            {{ humanizeTechnicalLabel(row.targetType) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="targetId" label="Record id" min-width="200">
           <template #default="{ row }">
             <span class="mono">{{ row.targetId }}</span>

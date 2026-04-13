@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
 import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { positionStatusLabel } from '@/utils/display'
 
 type PositionRow = {
   id: string
@@ -136,7 +137,9 @@ onMounted(load)
         <el-table-column prop="title" label="Title" min-width="200" />
         <el-table-column prop="status" label="Status" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'open' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="row.status === 'open' ? 'success' : 'info'" size="small">{{
+              positionStatusLabel(row.status)
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="Description" min-width="220" show-overflow-tooltip>

@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiGet, apiPatch, apiPost } from '@/api/http'
 import { DEV_ADMIN_USER_ID, DEV_INSTITUTION_ID } from '@/config/devSeed'
 import { useAuthStore } from '@/stores/auth'
+import { caseStatusLabel, humanizeTechnicalLabel } from '@/utils/display'
 
 type CaseRow = {
   id: string
@@ -77,6 +78,14 @@ const statusOptions = [
 
 const nextStatus = ref('')
 
+const transitionStatusOptions = statusOptions.filter((o) => o.value !== '')
+
+function stepCodeLabel(code: string): string {
+  const c = code.trim()
+  if (c === 'note') return 'Note'
+  return humanizeTechnicalLabel(c)
+}
+
 async function load() {
   loading.value = true
   try {
@@ -141,7 +150,7 @@ async function submitCreate() {
     await load()
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Create failed'
-    if (msg.includes('duplicate') || msg.includes('409')) {
+    if (msg.toLowerCase().includes('duplicate')) {
       ElMessage.warning('Duplicate submission blocked (same details within 5 minutes).')
     } else {
       ElMessage.error(msg)
@@ -305,10 +314,14 @@ onMounted(load)
       <el-table v-loading="loading" :data="rows" stripe empty-text="No cases to show">
         <el-table-column prop="caseNumber" label="Case #" width="200" show-overflow-tooltip />
         <el-table-column prop="title" label="Title" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="caseType" label="Type" width="120" />
+        <el-table-column prop="caseType" label="Type" width="120">
+          <template #default="{ row }">
+            {{ humanizeTechnicalLabel(row.caseType) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="Status" width="130">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.status }}</el-tag>
+            <el-tag size="small">{{ caseStatusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="reportedAt" label="Reported" width="180">
@@ -362,9 +375,9 @@ onMounted(load)
         <p class="detail-title">{{ activeCase.title }}</p>
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="Status">
-            <el-tag size="small">{{ activeCase.status }}</el-tag>
+            <el-tag size="small">{{ caseStatusLabel(activeCase.status) }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="Type">{{ activeCase.caseType }}</el-descriptions-item>
+          <el-descriptions-item label="Type">{{ humanizeTechnicalLabel(activeCase.caseType) }}</el-descriptions-item>
           <el-descriptions-item label="Reported">{{ new Date(activeCase.reportedAt).toLocaleString() }}</el-descriptions-item>
           <el-descriptions-item label="Description">
             <span class="detail-desc">{{ activeCase.description }}</span>
@@ -373,15 +386,12 @@ onMounted(load)
 
         <div v-if="canManage()" class="detail-actions">
           <el-button size="small" :icon="EditPen" @click="editCase">Edit title/description</el-button>
-          <el-button size="small" @click="assignToAdmin">Assign to admin (dev)</el-button>
+          <el-button size="small" @click="assignToAdmin">Assign to administrator</el-button>
         </div>
         <div v-if="canManage()" class="detail-actions">
           <span class="muted">Next status</span>
           <el-select v-model="nextStatus" placeholder="Select transition" clearable style="width: 200px" size="small">
-            <el-option label="assigned" value="assigned" />
-            <el-option label="in_progress" value="in_progress" />
-            <el-option label="pending_review" value="pending_review" />
-            <el-option label="closed" value="closed" />
+            <el-option v-for="o in transitionStatusOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
           <el-button size="small" type="primary" :disabled="!nextStatus" @click="applyTransition">Apply</el-button>
         </div>
@@ -396,7 +406,7 @@ onMounted(load)
             :key="p.id"
             :timestamp="new Date(p.createdAt).toLocaleString()"
           >
-            <strong>{{ p.stepCode }}</strong>
+            <strong>{{ stepCodeLabel(p.stepCode) }}</strong>
             <span v-if="p.note" class="muted"> — {{ p.note }}</span>
           </el-timeline-item>
         </el-timeline>
@@ -408,7 +418,7 @@ onMounted(load)
             :key="t.id"
             :timestamp="new Date(t.createdAt).toLocaleString()"
           >
-            {{ t.fromStatus }} → {{ t.toStatus }}
+            {{ caseStatusLabel(t.fromStatus) }} → {{ caseStatusLabel(t.toStatus) }}
           </el-timeline-item>
         </el-timeline>
       </div>

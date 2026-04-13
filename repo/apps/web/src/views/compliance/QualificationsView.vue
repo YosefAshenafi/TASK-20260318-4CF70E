@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
 import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { qualificationStatusLabel } from '@/utils/display'
 import { useAuthStore } from '@/stores/auth'
 
 type QualRow = {
@@ -202,7 +203,9 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="status" label="Status" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{
+              qualificationStatusLabel(row.status)
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="expiresOn" label="Expires" width="120">

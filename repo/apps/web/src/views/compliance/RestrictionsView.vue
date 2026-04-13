@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGet, apiPatch, apiPost } from '@/api/http'
 import { DEV_INSTITUTION_ID } from '@/config/devSeed'
+import { humanizeTechnicalLabel } from '@/utils/display'
 import { useAuthStore } from '@/stores/auth'
 
 type RestrictionRow = {
@@ -110,7 +111,9 @@ function violationReasonText(details: Record<string, unknown> | undefined): stri
       case 'RESTRICTION_VIOLATION':
         return 'Purchase blocked by restriction rule'
       default:
-        return r
+        return r.includes('_') || r === r.toUpperCase()
+          ? humanizeTechnicalLabel(r.toLowerCase())
+          : r
     }
   }
   return '—'
