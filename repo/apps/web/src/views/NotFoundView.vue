@@ -6,7 +6,7 @@ const router = useRouter()
 
 <template>
   <div class="wrap">
-    <el-result icon="warning" title="Page not found" sub-title="The route does not exist.">
+    <el-result icon="warning" title="Page not found" sub-title="The link may be wrong or the page was removed.">
       <template #extra>
         <el-button type="primary" @click="router.push('/dashboard')">Go to dashboard</el-button>
       </template>

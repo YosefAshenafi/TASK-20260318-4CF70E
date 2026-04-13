@@ -69,7 +69,7 @@ function onPageChange(p: number) {
 async function requestExport() {
   try {
     await ElMessageBox.confirm(
-      'Queue an export job with the current filters (module / target type). Output file generation can be completed by a future offline worker.',
+      'Start an export using the filters above. Large exports may take a while and can finish in the background.',
       'Export audit log',
       { type: 'info' },
     )
@@ -81,14 +81,14 @@ async function requestExport() {
       module: moduleFilter.value.trim() || undefined,
       targetType: targetTypeFilter.value.trim() || undefined,
     })
-    ElMessage.success(`Export queued (${res.status}). Id: ${res.id.slice(0, 8)}…`)
+    ElMessage.success(`Export requested. Reference: ${res.id.slice(0, 8)}…`)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : 'Export failed')
   }
 }
 
 /**
- * Human-readable audit payload (design §17.2 field diff).
+ * Human-readable audit payload (field-level before/after when present).
  * Surfaces free-text fields like `note` as plain content, not JSON quotes.
  */
 function humanizeKey(key: string): string {
@@ -146,8 +146,8 @@ onMounted(load)
 
     <el-card class="rec-card" shadow="never">
       <div class="audit-filters">
-        <el-input v-model="moduleFilter" clearable placeholder="Module" style="width: 140px" @clear="load" />
-        <el-input v-model="targetTypeFilter" clearable placeholder="Target type" style="width: 160px" @clear="load" />
+        <el-input v-model="moduleFilter" clearable placeholder="Area" style="width: 140px" @clear="load" />
+        <el-input v-model="targetTypeFilter" clearable placeholder="What changed" style="width: 160px" @clear="load" />
         <el-button @click="load">Apply filters</el-button>
       </div>
       <el-table v-loading="loading" :data="rows" stripe empty-text="No audit entries">
@@ -156,7 +156,7 @@ onMounted(load)
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column prop="module" label="Module" width="110" />
+        <el-table-column prop="module" label="Area" width="110" />
         <el-table-column prop="operation" label="Operation" width="160" show-overflow-tooltip />
         <el-table-column prop="operatorId" label="Operator" width="200">
           <template #default="{ row }">
@@ -164,7 +164,7 @@ onMounted(load)
           </template>
         </el-table-column>
         <el-table-column prop="targetType" label="Target" width="120" />
-        <el-table-column prop="targetId" label="Target id" min-width="200">
+        <el-table-column prop="targetId" label="Record id" min-width="200">
           <template #default="{ row }">
             <span class="mono">{{ row.targetId }}</span>
           </template>

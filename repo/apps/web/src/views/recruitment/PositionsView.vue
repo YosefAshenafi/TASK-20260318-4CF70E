@@ -132,7 +132,7 @@ onMounted(load)
     </div>
 
     <el-card class="rec-card" shadow="never">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No positions in scope">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No positions to show">
         <el-table-column prop="title" label="Title" min-width="200" />
         <el-table-column prop="status" label="Status" width="110">
           <template #default="{ row }">

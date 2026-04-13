@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end checks against the Dockerized stack (nginx → static web + proxied API).
-# Requires: `docker compose up -d --build` and migrations applied (as in run_tests.sh).
+# Full-stack checks: nginx static SPA + proxied API (same-origin session).
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENVE="$REPO/scripts/assert_ok_envelope.py"
 
 echo "[E2E] Running stack integration checks..."
 
@@ -18,6 +20,10 @@ echo "$HTML" | grep -q 'PharmaOps' || {
   echo "[E2E] Expected PharmaOps title in index response"
   exit 1
 }
+if ! echo "$HTML" | grep -qE '/assets/index-[^/]+\.(js|mjs)' && ! echo "$HTML" | grep -q '/src/main.ts'; then
+  echo "[E2E] Expected bundled asset or dev script reference in HTML"
+  exit 1
+fi
 
 echo "[E2E] GET $BASE/dashboard (history mode → index.html)"
 DASH="$(curl -fsS "$BASE/dashboard")"
@@ -37,19 +43,13 @@ echo "[E2E] Same-origin API via nginx: login + session"
 LOGIN_JSON="$(curl -fsS -X POST "$BASE/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"password"}')"
-echo "$LOGIN_JSON" | grep -q '"code":"OK"' || {
-  echo "[E2E] Login envelope not OK"
-  exit 1
-}
-TOKEN="$(echo "$LOGIN_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+echo "$LOGIN_JSON" | python3 "$ENVE"
+TOKEN="$(echo "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["token"])')"
 if [[ -z "$TOKEN" ]]; then
   echo "[E2E] Could not parse session token"
   exit 1
 fi
 ME_JSON="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/auth/me")"
-echo "$ME_JSON" | grep -q '"code":"OK"' || {
-  echo "[E2E] /auth/me not OK through nginx proxy"
-  exit 1
-}
+echo "$ME_JSON" | python3 "$ENVE"
 
 echo "[E2E] All checks passed."

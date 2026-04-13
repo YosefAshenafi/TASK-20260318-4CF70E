@@ -60,7 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
     const env = await readEnvelope(res)
     if (!res.ok || env.code !== 'OK') {
       clearLocal()
-      throw new Error(env.message || 'Session invalid')
+      throw new Error(env.message?.trim() || 'Your session has expired. Please sign in again.')
     }
     const d = env.data as {
       id: string
@@ -102,7 +102,7 @@ export const useAuthStore = defineStore('auth', () => {
     })
     const env = await readEnvelope(res)
     if (!res.ok || env.code !== 'OK') {
-      throw new Error(env.message || 'Login failed')
+      throw new Error(env.message?.trim() || 'Sign in failed. Check your username and password.')
     }
     const d = env.data as { token: string }
     sessionStorage.setItem(TOKEN_KEY, d.token)

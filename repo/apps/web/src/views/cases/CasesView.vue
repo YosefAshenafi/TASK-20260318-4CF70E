@@ -180,7 +180,7 @@ async function assignToAdmin() {
     return
   }
   try {
-    await ElMessageBox.confirm('Assign this case to the dev admin user?', 'Assign', { type: 'info' })
+    await ElMessageBox.confirm('Assign this case to the administrator account?', 'Assign', { type: 'info' })
   } catch {
     return
   }
@@ -302,7 +302,7 @@ onMounted(load)
         </el-select>
         <el-button @click="load">Search</el-button>
       </div>
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No cases in scope">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No cases to show">
         <el-table-column prop="caseNumber" label="Case #" width="200" show-overflow-tooltip />
         <el-table-column prop="title" label="Title" min-width="200" show-overflow-tooltip />
         <el-table-column prop="caseType" label="Type" width="120" />

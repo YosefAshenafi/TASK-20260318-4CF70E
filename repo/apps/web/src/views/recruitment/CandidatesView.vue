@@ -145,7 +145,7 @@ onMounted(load)
     </div>
 
     <el-card class="rec-card" shadow="never">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No candidates in scope">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No candidates to show">
         <el-table-column prop="name" label="Name" min-width="160" />
         <el-table-column label="Experience" width="110">
           <template #default="{ row }">

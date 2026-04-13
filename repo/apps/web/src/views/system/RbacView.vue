@@ -44,7 +44,7 @@ type ScopeRow = {
   createdAt: string
 }
 
-/** docs/design.md §1 + §8.1.1 — canonical product personas (seeded roles). */
+/** Primary product persona slugs (created with a new database). */
 const PRIMARY_ROLE_SLUGS = new Set([
   'business_specialist',
   'compliance_administrator',
@@ -342,7 +342,7 @@ async function saveAddScope() {
   const key = newScopeKey.value.trim()
   const inst = newScopeInstitutionId.value.trim()
   if (!key || inst.length !== 36) {
-    ElMessage.warning('Scope key and institution id (UUID) are required')
+    ElMessage.warning('Enter a scope key and institution identifier.')
     return
   }
   const body: Record<string, unknown> = {
@@ -410,7 +410,10 @@ onMounted(async () => {
         <el-card class="rec-card" shadow="never">
           <div class="users-toolbar">
             <el-button type="primary" @click="openAddUser">Add user</el-button>
-            <span class="muted small">Create accounts and assign roles (design §10 / api-spec AccessController).</span>
+            <span class="muted small">
+              Create accounts and assign roles. Who can see and change what is enforced automatically when people use the
+              app.
+            </span>
           </div>
           <el-table v-loading="loadingUsers" :data="users" stripe empty-text="No users">
             <el-table-column prop="username" label="Username" width="140" />
@@ -443,9 +446,9 @@ onMounted(async () => {
           <div class="users-toolbar">
             <el-button type="primary" @click="openAddRole">Add role</el-button>
             <span class="muted small">
-              Lists all rows in <code class="mono">roles</code> (design 8.1). Four primary personas —
-              Business Specialist, Compliance Administrator, Recruitment Specialist, System Administrator — are
-              seeded and shown with a Primary badge. Extra roles extend the model as needed.
+              Lists all rows in <code class="mono">roles</code>. Four primary personas — Business Specialist,
+              Compliance Administrator, Recruitment Specialist, System Administrator — are included when the system
+              is first set up and are shown with a Primary badge. Extra roles extend the model as needed.
             </span>
           </div>
           <el-table v-loading="loadingRoles" :data="roles" stripe empty-text="No roles">
@@ -475,7 +478,7 @@ onMounted(async () => {
           <div class="users-toolbar">
             <el-button type="primary" @click="openAddScope">Add data scope</el-button>
             <span class="muted small">
-              Institution-wide, or narrow by department / team (design 10.2). Dev seed ids —
+              Institution-wide, or limited to a department or team. Sample identifiers —
               <code class="mono">dept</code> {{ DEV_DEPARTMENT_ID.slice(0, 8) }}…,
               <code class="mono">team</code> {{ DEV_TEAM_ID.slice(0, 8) }}…
             </span>
@@ -544,7 +547,7 @@ onMounted(async () => {
     </el-dialog>
 
     <el-dialog v-model="scopeDialogVisible" :title="`Data scopes — ${scopeUserLabel}`" width="520px" destroy-on-close>
-      <p class="muted small">Assigns institution / department / team visibility per design §10.2.</p>
+      <p class="muted small">Choose which institution, department, and team data this user can access.</p>
       <el-select
         v-model="selectedScopeIds"
         multiple

@@ -14,10 +14,23 @@ export type ApiEnvelope<T> = {
   data?: T
 }
 
+function friendlyFailureMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return 'You do not have permission to do that.'
+  }
+  if (status === 404) {
+    return 'The item could not be found.'
+  }
+  if (status >= 500) {
+    return 'Something went wrong. Please try again in a moment.'
+  }
+  return 'Something went wrong. Please try again.'
+}
+
 async function parseEnvelope<T>(res: Response): Promise<T> {
   const env = (await res.json()) as ApiEnvelope<T>
   if (!res.ok || env.code !== 'OK') {
-    throw new Error(env.message || `HTTP ${res.status}`)
+    throw new Error(env.message?.trim() || friendlyFailureMessage(res.status))
   }
   return env.data as T
 }
@@ -72,7 +85,7 @@ export async function apiPutBytes(path: string, body: ArrayBuffer | Uint8Array):
   const text = await res.text()
   if (!text) {
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`)
+      throw new Error(friendlyFailureMessage(res.status))
     }
     return
   }
@@ -80,9 +93,9 @@ export async function apiPutBytes(path: string, body: ArrayBuffer | Uint8Array):
   try {
     env = JSON.parse(text) as ApiEnvelope<unknown>
   } catch {
-    throw new Error(`HTTP ${res.status}`)
+    throw new Error(friendlyFailureMessage(res.status))
   }
   if (!res.ok || env.code !== 'OK') {
-    throw new Error(env.message || `HTTP ${res.status}`)
+    throw new Error(env.message?.trim() || friendlyFailureMessage(res.status))
   }
 }

@@ -193,7 +193,7 @@ onMounted(async () => {
     />
 
     <el-card class="rec-card" shadow="never">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No qualifications in scope">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No qualifications to show">
         <el-table-column prop="displayName" label="Client / name" min-width="220">
           <template #default="{ row }">
             <div class="qual-name">{{ row.displayName }}</div>

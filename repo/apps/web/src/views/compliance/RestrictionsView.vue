@@ -80,7 +80,7 @@ function ruleSummary(rule: Record<string, unknown>): string {
   return parts.length ? parts.join(' · ') : '—'
 }
 
-/** Human-readable violation line for operators (design §5.4 violation history — no raw JSON in the grid). */
+/** Human-readable violation line for operators (no raw JSON in the grid). */
 function violationReasonText(details: Record<string, unknown> | undefined): string {
   if (!details || typeof details !== 'object') {
     return '—'
@@ -294,7 +294,11 @@ async function submitCheck() {
 
 async function runExpirationJob() {
   try {
-    await ElMessageBox.confirm('Run expiration sweep for qualifications in your scope?', 'Job', { type: 'info' })
+    await ElMessageBox.confirm(
+      'Run the daily expiration check for the qualifications you can manage?',
+      'Expiration check',
+      { type: 'info' },
+    )
   } catch {
     return
   }
@@ -324,7 +328,7 @@ onMounted(async () => {
     </div>
 
     <el-card class="rec-card" shadow="never">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="No restrictions in scope">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="No restrictions to show">
         <el-table-column label="Client" min-width="160">
           <template #default="{ row }">
             <span>{{ row.clientId }}</span>
@@ -445,7 +449,7 @@ onMounted(async () => {
           <el-switch v-model="checkControlled" />
         </el-form-item>
         <el-form-item label="Prescription attachment ID (optional)">
-          <el-input v-model="checkRxId" placeholder="file id when required" />
+          <el-input v-model="checkRxId" placeholder="Prescription attachment id if required" />
         </el-form-item>
         <el-form-item label="Purchase time (local)">
           <el-input v-model="checkAt" type="datetime-local" />

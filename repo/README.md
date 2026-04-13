@@ -24,4 +24,10 @@ docker compose down
 bash run_tests.sh
 ```
 
-This builds/starts the Compose stack, performs a **web smoke check** (HTTP 200 on port 8080), then runs unit, API, and E2E stages. Any failure exits non-zero.
+This builds/starts the Compose stack, performs a **web smoke check** (HTTP 200 on port 8080), then runs unit, API, E2E, and design conformance checks against `docs/design.md`. Any failure exits non-zero.
+
+Full release verification (clean database volumes, same stages, log under `reports/`):
+
+```bash
+bash testrun.sh
+```

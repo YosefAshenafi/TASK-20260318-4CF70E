@@ -121,7 +121,7 @@ async function runUpload() {
       const start = i * chunkSizeBytes
       const end = Math.min(start + chunkSizeBytes, buf.byteLength)
       const slice = buf.slice(start, end)
-      uploadProgress.value = `Uploading chunk ${i + 1} / ${totalChunks}`
+      uploadProgress.value = `Uploading part ${i + 1} of ${totalChunks}`
       await apiPutBytes(`/api/v1/files/uploads/${init.uploadId}/chunks/${i}`, slice)
     }
     const hash = await sha256Hex(buf)
@@ -146,7 +146,7 @@ async function linkToCase() {
   const fid = linkFileId.value.trim()
   const rid = linkRefId.value.trim()
   if (!fid || !rid) {
-    ElMessage.warning('Enter file id and case id')
+    ElMessage.warning('Enter the file and case identifiers')
     return
   }
   try {
@@ -168,12 +168,21 @@ async function downloadFile(row: FileRow) {
   })
   if (!res.ok) {
     const t = await res.text()
-    let msg = `HTTP ${res.status}`
+    let msg = ''
     try {
       const j = JSON.parse(t) as { message?: string }
       if (j.message) msg = j.message
     } catch {
       /* ignore */
+    }
+    if (!msg) {
+      if (res.status === 401 || res.status === 403) {
+        msg = 'You do not have permission to download this file.'
+      } else if (res.status === 404) {
+        msg = 'This file is no longer available.'
+      } else {
+        msg = 'Download failed. Please try again.'
+      }
     }
     ElMessage.error(msg)
     return
@@ -203,7 +212,7 @@ onMounted(() => {
   <div class="page">
     <header class="page-head">
       <h1>Files</h1>
-      <p class="muted">Stored objects and resumable uploads (chunked).</p>
+      <p class="muted">Stored files and uploads you can resume if the connection drops.</p>
     </header>
 
     <el-card v-if="canManage()" class="panel" shadow="never">
@@ -217,7 +226,7 @@ onMounted(() => {
         </el-button>
         <span v-if="uploadProgress" class="muted">{{ uploadProgress }}</span>
       </div>
-      <p class="muted small">Allowed types include PDF, images, plain text, Word. Max 100 MiB. Chunks use 1 MiB.</p>
+      <p class="muted small">Allowed types include PDF, images, plain text, and Word. Maximum size about 100 MB.</p>
     </el-card>
 
     <el-card v-if="canManage()" class="panel" shadow="never">
@@ -225,11 +234,11 @@ onMounted(() => {
         <span>Link to case</span>
       </template>
       <div class="link-grid">
-        <el-input v-model="linkFileId" placeholder="File id (UUID)" clearable />
-        <el-input v-model="linkRefId" placeholder="Case id (UUID)" clearable />
+        <el-input v-model="linkFileId" placeholder="File identifier" clearable />
+        <el-input v-model="linkRefId" placeholder="Case identifier" clearable />
         <el-button type="primary" @click="linkToCase">Link</el-button>
       </div>
-      <p class="muted small">Uses your data scope; demo case id is pre-filled when seeded.</p>
+      <p class="muted small">Only cases you can access can be linked. A sample case identifier may appear when demo data is loaded.</p>
     </el-card>
 
     <el-card class="panel" shadow="never">
