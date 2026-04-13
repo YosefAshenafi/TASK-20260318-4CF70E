@@ -152,6 +152,10 @@ func (h *FileHandler) CompleteUpload(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "FILE_HASH_MISMATCH", "sha256 mismatch")
 		return
 	}
+	if errors.Is(err, service.ErrFileTypeNotAllowed) {
+		response.Error(c, http.StatusBadRequest, "FILE_TYPE_NOT_ALLOWED", "file content does not match declared type")
+		return
+	}
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to complete upload")
 		return

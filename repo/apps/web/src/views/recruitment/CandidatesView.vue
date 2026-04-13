@@ -3,7 +3,7 @@ import { Delete, EditPen } from '@element-plus/icons-vue'
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { apiDelete, apiGet, apiPatch, apiPost } from '@/api/http'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPutBytes } from '@/api/http'
 import { useCreateScopeContext } from '@/composables/useDataScope'
 
 type CandidateRow = {
@@ -73,7 +73,11 @@ const editCustomFields = ref<CustomFieldKV[]>([])
 
 const importVisible = ref(false)
 const importSaving = ref(false)
-const importRowsText = ref('[\n  {"name":"Demo Candidate","skills":["GMP"],"educationLevel":"Bachelor","experienceYears":2}\n]')
+const importUploading = ref(false)
+const importPreviewRows = ref<CustomFieldKV[]>([])
+const importValidationErrors = ref<string[]>([])
+const importBatchId = ref('')
+const importFileInput = ref<File[]>([])
 
 const duplicateLoading = ref(false)
 const duplicates = ref<DuplicateGroup[]>([])
@@ -264,25 +268,90 @@ async function confirmDelete(row: CandidateRow) {
 }
 
 function openImport() {
+  importBatchId.value = ''
+  importValidationErrors.value = []
+  importPreviewRows.value = []
+  importFileInput.value = []
   importVisible.value = true
 }
-async function commitImport() {
-  let rows: Array<Record<string, unknown>>
-  try {
-    const parsed = JSON.parse(importRowsText.value)
-    if (!Array.isArray(parsed) || parsed.length === 0) return ElMessage.warning('Import payload must be a non-empty JSON array.')
-    rows = parsed as Array<Record<string, unknown>>
-  } catch {
-    return ElMessage.warning('Import payload must be valid JSON.')
+
+function onResumePick(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  importFileInput.value = Array.from(input.files ?? [])
+}
+
+function guessMime(file: File): string {
+  if (file.type && file.type !== 'application/octet-stream') return file.type
+  const n = file.name.toLowerCase()
+  if (n.endsWith('.pdf')) return 'application/pdf'
+  if (n.endsWith('.txt')) return 'text/plain'
+  if (n.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  if (n.endsWith('.doc')) return 'application/msword'
+  return 'text/plain'
+}
+
+async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', buf)
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function uploadResumeFile(file: File): Promise<string> {
+  const chunkSize = 1024 * 1024
+  const init = await apiPost<{ uploadId: string; totalChunks: number }>('/api/v1/files/uploads/init', {
+    fileName: file.name,
+    size: file.size,
+    mimeType: guessMime(file),
+    chunkSize,
+  })
+  const buf = await file.arrayBuffer()
+  for (let i = 0; i < init.totalChunks; i++) {
+    const start = i * chunkSize
+    const end = Math.min(start + chunkSize, buf.byteLength)
+    await apiPutBytes(`/api/v1/files/uploads/${init.uploadId}/chunks/${i}`, buf.slice(start, end))
   }
-  importSaving.value = true
+  const done = await apiPost<{ fileId: string }>(`/api/v1/files/uploads/${init.uploadId}/complete`, {
+    sha256: await sha256Hex(buf),
+  })
+  return done.fileId
+}
+
+async function buildImportPreview() {
+  if (!importFileInput.value.length) return ElMessage.warning('Select resume files first.')
+  importUploading.value = true
+  importValidationErrors.value = []
   try {
     const scope = requireContext()
-    const batch = await apiPost<{ id: string }>('/api/v1/recruitment/candidates/imports', {
-      institutionId: scope.institutionId,
-      rows,
-    })
-    await apiPost(`/api/v1/recruitment/candidates/imports/${batch.id}/commit`, {})
+    const fileIds: string[] = []
+    for (const f of importFileInput.value) {
+      fileIds.push(await uploadResumeFile(f))
+    }
+    const batch = await apiPost<{ id: string; validationReport?: { rows?: Array<Record<string, unknown>>; errors?: Array<{ rowIndex: number; message: string }>; warnings?: Array<{ rowIndex: number; message: string }> } }>(
+      '/api/v1/recruitment/candidates/imports',
+      {
+        institutionId: scope.institutionId,
+        resumeFileIds: fileIds,
+      },
+    )
+    importBatchId.value = batch.id
+    const rows = batch.validationReport?.rows ?? []
+    importPreviewRows.value = rows.map((r) => ({ key: String(r.name ?? '(no name)'), value: String(r.email ?? r.phone ?? r.idNumber ?? 'no contact extracted') }))
+    importValidationErrors.value = [
+      ...(batch.validationReport?.errors ?? []).map((e) => `Row ${e.rowIndex + 1}: ${e.message}`),
+      ...(batch.validationReport?.warnings ?? []).map((e) => `Row ${e.rowIndex + 1} warning: ${e.message}`),
+    ]
+    ElMessage.success('Preview generated from uploaded resumes.')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Failed to build import preview')
+  } finally {
+    importUploading.value = false
+  }
+}
+
+async function commitImport() {
+  if (!importBatchId.value) return ElMessage.warning('Generate preview first.')
+  importSaving.value = true
+  try {
+    await apiPost(`/api/v1/recruitment/candidates/imports/${importBatchId.value}/commit`, {})
     ElMessage.success('Import committed. Duplicate rows are auto-merged by phone/ID.')
     importVisible.value = false
     await Promise.all([load(), loadDuplicates()])
@@ -419,10 +488,22 @@ onMounted(async () => {
       <template #footer><el-button @click="editVisible = false">Cancel</el-button><el-button type="primary" :loading="editSaving" @click="submitEdit">Save</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="importVisible" title="Bulk import candidates" width="720px" destroy-on-close>
-      <p class="muted">Paste JSON array rows (name, contact, skills, tags, customFields).</p>
-      <el-input v-model="importRowsText" type="textarea" :rows="14" />
-      <template #footer><el-button @click="importVisible = false">Cancel</el-button><el-button type="primary" :loading="importSaving" @click="commitImport">Create & commit</el-button></template>
+    <el-dialog v-model="importVisible" title="Bulk import resumes" width="760px" destroy-on-close>
+      <p class="muted">Upload resume files, review extracted candidate previews, then commit import.</p>
+      <input type="file" multiple accept=".pdf,.txt,.doc,.docx" @change="onResumePick" />
+      <div class="tool-actions" style="margin-top: 8px">
+        <el-button :loading="importUploading" @click="buildImportPreview">Upload + preview extraction</el-button>
+      </div>
+      <el-alert v-if="importValidationErrors.length" title="Validation feedback" type="warning" :closable="false" style="margin-top: 10px">
+        <template #default>
+          <ul><li v-for="e in importValidationErrors" :key="e">{{ e }}</li></ul>
+        </template>
+      </el-alert>
+      <el-table v-if="importPreviewRows.length" :data="importPreviewRows" size="small" style="margin-top: 10px">
+        <el-table-column prop="key" label="Candidate" />
+        <el-table-column prop="value" label="Extracted contact" />
+      </el-table>
+      <template #footer><el-button @click="importVisible = false">Cancel</el-button><el-button type="primary" :loading="importSaving" @click="commitImport">Commit import</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="matchVisible" title="Match and recommendations" width="760px" destroy-on-close>

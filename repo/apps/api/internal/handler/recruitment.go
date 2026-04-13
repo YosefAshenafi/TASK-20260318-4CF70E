@@ -412,13 +412,18 @@ func (h *RecruitmentHandler) CreateImportBatch(c *gin.Context) {
 	uid := c.GetString("userID")
 	var body struct {
 		InstitutionID string                     `json:"institutionId" binding:"required"`
-		Rows          []service.ImportStagingRow `json:"rows" binding:"required"`
+		Rows          []service.ImportStagingRow `json:"rows"`
+		ResumeFileIDs []string                   `json:"resumeFileIds"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
 		return
 	}
-	dto, err := h.svc.CreateImportBatch(c.Request.Context(), pr, uid, body.InstitutionID, body.Rows)
+	dto, err := h.svc.CreateImportBatch(c.Request.Context(), pr, uid, service.CreateImportBatchInput{
+		InstitutionID: body.InstitutionID,
+		Rows:          body.Rows,
+		ResumeFileIDs: body.ResumeFileIDs,
+	})
 	if errors.Is(err, service.ErrForbiddenScope) {
 		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
 		return

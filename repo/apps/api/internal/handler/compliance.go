@@ -378,7 +378,6 @@ type checkPurchaseBody struct {
 	InstitutionID            string  `json:"institutionId" binding:"required"`
 	ClientID                 string  `json:"clientId" binding:"required"`
 	MedicationID             string  `json:"medicationId" binding:"required"`
-	IsControlled             bool    `json:"isControlled"`
 	PrescriptionAttachmentID *string `json:"prescriptionAttachmentId"`
 	PurchaseAt               string  `json:"purchaseAt" binding:"required"`
 }
@@ -403,7 +402,6 @@ func (h *ComplianceHandler) CheckPurchase(c *gin.Context) {
 		InstitutionID:            body.InstitutionID,
 		ClientID:                 body.ClientID,
 		MedicationID:             body.MedicationID,
-		IsControlled:             body.IsControlled,
 		PrescriptionAttachmentID: body.PrescriptionAttachmentID,
 		PurchaseAt:               t,
 	})

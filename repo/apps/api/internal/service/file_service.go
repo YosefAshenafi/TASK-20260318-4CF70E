@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"pharmaops/api/internal/access"
@@ -18,12 +21,12 @@ import (
 )
 
 const (
-	maxFileBytes        = 100 << 20 // 100 MiB
-	minChunkBytes       = 256 * 1024
-	maxChunkBytes       = 8 << 20
-	uploadSessionTTL    = 24 * time.Hour
-	chunkFilePerm       = 0o600
-	dirPerm             = 0o700
+	maxFileBytes     = 100 << 20 // 100 MiB
+	minChunkBytes    = 256 * 1024
+	maxChunkBytes    = 8 << 20
+	uploadSessionTTL = 24 * time.Hour
+	chunkFilePerm    = 0o600
+	dirPerm          = 0o700
 )
 
 var allowedMimeTypes = map[string]struct{}{
@@ -49,11 +52,22 @@ var (
 	ErrInvalidChunk          = errors.New("invalid chunk")
 )
 
+var allowedFileExtensions = map[string]map[string]struct{}{
+	".pdf":  {"application/pdf": {}},
+	".jpg":  {"image/jpeg": {}},
+	".jpeg": {"image/jpeg": {}},
+	".png":  {"image/png": {}},
+	".webp": {"image/webp": {}},
+	".txt":  {"text/plain": {}},
+	".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
+	".doc":  {"application/msword": {}},
+}
+
 type FileService struct {
-	root     string
-	files    *repository.FileRepository
-	cases    *repository.CaseRepository
-	audit    *AuditService
+	root  string
+	files *repository.FileRepository
+	cases *repository.CaseRepository
+	audit *AuditService
 }
 
 func NewFileService(root string, files *repository.FileRepository, cases *repository.CaseRepository, audit *AuditService) *FileService {
@@ -92,16 +106,16 @@ func (s *FileService) InitUpload(ctx context.Context, userID string, in InitUplo
 	exp := time.Now().UTC().Add(uploadSessionTTL)
 	mime := in.MimeType
 	row := &model.UploadSession{
-		ID:          id,
-		UserID:      userID,
-		FileName:    in.FileName,
-		TotalSize:   in.Size,
-		ChunkSize:   in.ChunkSize,
-		MimeType:    &mime,
-		Status:      "initialized",
+		ID:           id,
+		UserID:       userID,
+		FileName:     in.FileName,
+		TotalSize:    in.Size,
+		ChunkSize:    in.ChunkSize,
+		MimeType:     &mime,
+		Status:       "initialized",
 		MergedFileID: nil,
-		ExpiresAt:   &exp,
-		CreatedAt:   time.Now().UTC(),
+		ExpiresAt:    &exp,
+		CreatedAt:    time.Now().UTC(),
 	}
 	if err := s.files.CreateUploadSession(ctx, row); err != nil {
 		return "", 0, time.Time{}, err
@@ -165,7 +179,9 @@ func (s *FileService) PutChunk(ctx context.Context, userID, uploadID string, chu
 }
 
 func chunkCount(totalSize, chunkSize uint64) uint64 {
-	if totalSize == 0 { return 0 }
+	if totalSize == 0 {
+		return 0
+	}
 	return (totalSize + chunkSize - 1) / chunkSize
 }
 
@@ -189,9 +205,9 @@ type CompleteUploadInput struct {
 
 // CompleteUploadResponse matches api-spec completion data.
 type CompleteUploadResponse struct {
-	FileID         string `json:"fileId"`
-	SHA256         string `json:"sha256"`
-	Deduplicated   bool   `json:"deduplicated"`
+	FileID       string `json:"fileId"`
+	SHA256       string `json:"sha256"`
+	Deduplicated bool   `json:"deduplicated"`
 }
 
 func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID string, in CompleteUploadInput, meta AuditRequestMeta) (*CompleteUploadResponse, error) {
@@ -264,6 +280,14 @@ func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID strin
 		os.Remove(mergedAbs)
 		return nil, ErrFileHashMismatch
 	}
+	declaredMime := ""
+	if sess.MimeType != nil {
+		declaredMime = *sess.MimeType
+	}
+	if err := validateUploadedFileType(mergedAbs, sess.FileName, declaredMime); err != nil {
+		os.Remove(mergedAbs)
+		return nil, err
+	}
 	// Deduplicate
 	existing, err := s.files.GetFileObjectBySHA256(ctx, finalHash)
 	if err == nil && existing != nil {
@@ -308,13 +332,9 @@ func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID strin
 		os.Remove(mergedAbs)
 		return nil, err
 	}
-	mime := ""
-	if sess.MimeType != nil {
-		mime = *sess.MimeType
-	}
 	var mimePtr *string
-	if mime != "" {
-		mimePtr = &mime
+	if declaredMime != "" {
+		mimePtr = &declaredMime
 	}
 	fo := &model.FileObject{
 		ID:          fileID,
@@ -374,6 +394,87 @@ func (s *FileService) CompleteUpload(ctx context.Context, userID, uploadID strin
 	return &CompleteUploadResponse{FileID: fileID, SHA256: finalHash, Deduplicated: false}, nil
 }
 
+func validateUploadedFileType(path, fileName, declaredMime string) error {
+	if _, ok := allowedMimeTypes[declaredMime]; !ok {
+		return ErrFileTypeNotAllowed
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext != "" {
+		extAllowed, ok := allowedFileExtensions[ext]
+		if !ok {
+			return ErrFileTypeNotAllowed
+		}
+		if _, ok := extAllowed[declaredMime]; !ok {
+			return ErrFileTypeNotAllowed
+		}
+	}
+	sample, err := readFileTypeSample(path)
+	if err != nil {
+		return err
+	}
+	if !matchesDeclaredMime(sample, declaredMime) {
+		return ErrFileTypeNotAllowed
+	}
+	return nil
+}
+
+func readFileTypeSample(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, err := f.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:n], nil
+}
+
+func matchesDeclaredMime(sample []byte, declaredMime string) bool {
+	switch declaredMime {
+	case "application/pdf":
+		return len(sample) >= 5 && string(sample[:5]) == "%PDF-"
+	case "image/jpeg":
+		return len(sample) >= 3 && sample[0] == 0xFF && sample[1] == 0xD8 && sample[2] == 0xFF
+	case "image/png":
+		return len(sample) >= 8 &&
+			sample[0] == 0x89 && sample[1] == 0x50 && sample[2] == 0x4E && sample[3] == 0x47 &&
+			sample[4] == 0x0D && sample[5] == 0x0A && sample[6] == 0x1A && sample[7] == 0x0A
+	case "image/webp":
+		return len(sample) >= 12 && string(sample[:4]) == "RIFF" && string(sample[8:12]) == "WEBP"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return len(sample) >= 4 &&
+			sample[0] == 0x50 && sample[1] == 0x4B &&
+			(sample[2] == 0x03 || sample[2] == 0x05 || sample[2] == 0x07) &&
+			(sample[3] == 0x04 || sample[3] == 0x06 || sample[3] == 0x08)
+	case "application/msword":
+		return len(sample) >= 8 &&
+			sample[0] == 0xD0 && sample[1] == 0xCF && sample[2] == 0x11 && sample[3] == 0xE0 &&
+			sample[4] == 0xA1 && sample[5] == 0xB1 && sample[6] == 0x1A && sample[7] == 0xE1
+	case "text/plain":
+		return isLikelyPlainText(sample)
+	default:
+		return http.DetectContentType(sample) == declaredMime
+	}
+}
+
+func isLikelyPlainText(sample []byte) bool {
+	if len(sample) == 0 {
+		return true
+	}
+	for _, b := range sample {
+		if b == 0 {
+			return false
+		}
+		if b < 0x09 || (b > 0x0D && b < 0x20) {
+			return false
+		}
+	}
+	return utf8.Valid(sample)
+}
+
 func (s *FileService) removeChunkDir(uploadID string) error {
 	d := filepath.Join(s.root, "chunks", uploadID)
 	return os.RemoveAll(d)
@@ -381,16 +482,16 @@ func (s *FileService) removeChunkDir(uploadID string) error {
 
 // UploadSessionDTO for GET /files/uploads/{id}.
 type UploadSessionDTO struct {
-	ID              string  `json:"id"`
-	Status          string  `json:"status"`
-	FileName        string  `json:"fileName"`
-	TotalSize       uint64  `json:"totalSize"`
-	ChunkSize       uint32  `json:"chunkSize"`
-	MimeType        *string `json:"mimeType,omitempty"`
-	ReceivedChunks  int64   `json:"receivedChunks"`
-	TotalChunks     uint64  `json:"totalChunks"`
-	MergedFileID    *string `json:"mergedFileId,omitempty"`
-	ExpiresAt       *string `json:"expiresAt,omitempty"`
+	ID             string  `json:"id"`
+	Status         string  `json:"status"`
+	FileName       string  `json:"fileName"`
+	TotalSize      uint64  `json:"totalSize"`
+	ChunkSize      uint32  `json:"chunkSize"`
+	MimeType       *string `json:"mimeType,omitempty"`
+	ReceivedChunks int64   `json:"receivedChunks"`
+	TotalChunks    uint64  `json:"totalChunks"`
+	MergedFileID   *string `json:"mergedFileId,omitempty"`
+	ExpiresAt      *string `json:"expiresAt,omitempty"`
 }
 
 func (s *FileService) GetUploadSession(ctx context.Context, userID, uploadID string) (*UploadSessionDTO, error) {
@@ -501,6 +602,15 @@ type LinkFileInput struct {
 	Purpose *string
 }
 
+type CaseAttachmentDTO struct {
+	FileID     string  `json:"fileId"`
+	MimeType   *string `json:"mimeType,omitempty"`
+	SizeBytes  uint64  `json:"sizeBytes"`
+	SHA256     string  `json:"sha256"`
+	Purpose    *string `json:"purpose,omitempty"`
+	AttachedAt string  `json:"attachedAt"`
+}
+
 func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Principal, fileID string, in LinkFileInput, meta AuditRequestMeta) error {
 	if pr == nil || userID == "" {
 		return ErrForbiddenScope
@@ -563,6 +673,77 @@ func (s *FileService) LinkFile(ctx context.Context, userID string, pr *access.Pr
 			"referenceId": ref.ID,
 			"refType":     in.RefType,
 			"refId":       in.RefID,
+		},
+		Meta: m,
+	})
+	return nil
+}
+
+func (s *FileService) ListCaseAttachments(ctx context.Context, pr *access.Principal, caseID string) ([]CaseAttachmentDTO, error) {
+	if err := requireScope(pr); err != nil {
+		return nil, err
+	}
+	if _, err := s.cases.GetCase(ctx, caseID, pr); err != nil {
+		return nil, err
+	}
+	rows, err := s.files.ListCaseAttachmentIndexes(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CaseAttachmentDTO, 0, len(rows))
+	for _, row := range rows {
+		fo, err := s.files.GetFileObject(ctx, row.FileObjectID)
+		if err != nil {
+			continue
+		}
+		out = append(out, CaseAttachmentDTO{
+			FileID:     fo.ID,
+			MimeType:   fo.MimeType,
+			SizeBytes:  fo.SizeBytes,
+			SHA256:     fo.SHA256,
+			Purpose:    row.Purpose,
+			AttachedAt: row.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return out, nil
+}
+
+func (s *FileService) AttachFileToCase(ctx context.Context, userID string, pr *access.Principal, caseID, fileID string, purpose *string, meta AuditRequestMeta) error {
+	if _, err := s.cases.GetCase(ctx, caseID, pr); err != nil {
+		return err
+	}
+	return s.LinkFile(ctx, userID, pr, fileID, LinkFileInput{
+		RefType: "case",
+		RefID:   caseID,
+		Purpose: purpose,
+	}, meta)
+}
+
+func (s *FileService) DetachCaseAttachment(ctx context.Context, userID string, pr *access.Principal, caseID, fileID string, meta AuditRequestMeta) error {
+	if err := requireScope(pr); err != nil {
+		return err
+	}
+	if _, err := s.cases.GetCase(ctx, caseID, pr); err != nil {
+		return err
+	}
+	if err := s.files.DeleteCaseAttachmentIndexByCaseAndFile(ctx, caseID, fileID); err != nil {
+		return err
+	}
+	if err := s.files.DeleteCaseFileReference(ctx, caseID, fileID); err != nil {
+		return err
+	}
+	m := meta
+	if m.OperatorUserID == "" {
+		m.OperatorUserID = userID
+	}
+	_ = s.audit.LogMutation(ctx, AuditMutationInput{
+		Module:     "files",
+		Operation:  "file.unlink_case",
+		TargetType: "file_object",
+		TargetID:   fileID,
+		After: map[string]any{
+			"caseId":   caseID,
+			"detached": true,
 		},
 		Meta: m,
 	})

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,21 +39,31 @@ func (r *CaseRepository) GetInstitutionCode(ctx context.Context, institutionID s
 // AllocateCaseSerial increments the per-institution, per-day serial inside a transaction (caller supplies tx).
 func (r *CaseRepository) AllocateCaseSerial(ctx context.Context, tx *gorm.DB, institutionID string, dayUTC time.Time) (uint32, error) {
 	d := time.Date(dayUTC.Year(), dayUTC.Month(), dayUTC.Day(), 0, 0, 0, 0, time.UTC)
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO case_number_sequences (institution_id, sequence_date, last_serial)
-		VALUES (?, ?, 1)
-		ON DUPLICATE KEY UPDATE last_serial = last_serial + 1
-	`, institutionID, d).Error; err != nil {
+	var seq model.CaseNumberSequence
+	err := tx.WithContext(ctx).
+		Where("institution_id = ? AND sequence_date = ?", institutionID, d).
+		First(&seq).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		seq = model.CaseNumberSequence{
+			InstitutionID: institutionID,
+			SequenceDate:  d,
+			LastSerial:    1,
+		}
+		if err := tx.WithContext(ctx).Create(&seq).Error; err != nil {
+			return 0, err
+		}
+		return seq.LastSerial, nil
+	}
+	if err != nil {
 		return 0, err
 	}
-	var seq uint32
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT last_serial FROM case_number_sequences
-		WHERE institution_id = ? AND sequence_date = ?
-	`, institutionID, d).Scan(&seq).Error; err != nil {
+	seq.LastSerial++
+	if err := tx.WithContext(ctx).Model(&model.CaseNumberSequence{}).
+		Where("institution_id = ? AND sequence_date = ?", institutionID, d).
+		Update("last_serial", seq.LastSerial).Error; err != nil {
 		return 0, err
 	}
-	return seq, nil
+	return seq.LastSerial, nil
 }
 
 func (r *CaseRepository) RecentDuplicateCount(ctx context.Context, p *access.Principal, hash string, since time.Time) (int64, error) {

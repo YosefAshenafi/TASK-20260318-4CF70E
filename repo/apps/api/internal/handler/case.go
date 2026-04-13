@@ -14,11 +14,12 @@ import (
 )
 
 type CaseHandler struct {
-	svc *service.CaseService
+	svc     *service.CaseService
+	fileSvc *service.FileService
 }
 
-func NewCaseHandler(svc *service.CaseService) *CaseHandler {
-	return &CaseHandler{svc: svc}
+func NewCaseHandler(svc *service.CaseService, fileSvc *service.FileService) *CaseHandler {
+	return &CaseHandler{svc: svc, fileSvc: fileSvc}
 }
 
 func (h *CaseHandler) SearchCaseLedger(c *gin.Context) {
@@ -329,4 +330,96 @@ func (h *CaseHandler) ListStatusTransitions(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"items": items})
+}
+
+func (h *CaseHandler) ListAttachments(c *gin.Context) {
+	if h.fileSvc == nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "file service not configured")
+		return
+	}
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	id := c.Param("id")
+	items, err := h.fileSvc.ListCaseAttachments(c.Request.Context(), pr, id)
+	if errors.Is(err, service.ErrForbiddenScope) {
+		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
+		return
+	}
+	if repository.IsNotFound(err) {
+		response.Error(c, http.StatusNotFound, "CASE_NOT_FOUND", "case not found")
+		return
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list case attachments")
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *CaseHandler) AttachFile(c *gin.Context) {
+	if h.fileSvc == nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "file service not configured")
+		return
+	}
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	uid := c.GetString("userID")
+	id := c.Param("id")
+	var body struct {
+		FileID  string  `json:"fileId" binding:"required"`
+		Purpose *string `json:"purpose"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
+		return
+	}
+	err := h.fileSvc.AttachFileToCase(c.Request.Context(), uid, pr, id, body.FileID, body.Purpose, auditRequestMeta(c))
+	if errors.Is(err, service.ErrForbiddenScope) {
+		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
+		return
+	}
+	if errors.Is(err, service.ErrFileNotFound) || repository.IsNotFound(err) {
+		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "case or file not found")
+		return
+	}
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *CaseHandler) DetachFile(c *gin.Context) {
+	if h.fileSvc == nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "file service not configured")
+		return
+	}
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
+		return
+	}
+	uid := c.GetString("userID")
+	id := c.Param("id")
+	fileID := c.Param("fileId")
+	err := h.fileSvc.DetachCaseAttachment(c.Request.Context(), uid, pr, id, fileID, auditRequestMeta(c))
+	if errors.Is(err, service.ErrForbiddenScope) {
+		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "institution not in scope")
+		return
+	}
+	if repository.IsNotFound(err) {
+		response.Error(c, http.StatusNotFound, "CASE_NOT_FOUND", "case not found")
+		return
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to detach file")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

@@ -94,3 +94,18 @@ Full release verification (clean database volumes, same stages, log under `repor
 ```bash
 bash testrun.sh
 ```
+
+## Audit Remediation (2026-04-13)
+
+This delivery includes targeted remediation for static-audit blockers and medium risks:
+
+- **Compliance bypass removed:** purchase restriction checks no longer trust client `isControlled`; prescription enforcement is derived from active server-side restriction rules.
+- **Resume bulk import workflow:** recruitment imports now support resume file intake (`resumeFileIds`), extraction preview with validation warnings/errors, and commit of valid rows.
+- **Case attachment archive workflow:** case detail now has direct list/attach/detach APIs and UI for attachment archive management.
+- **Coverage hardening:** added integration-style tests for compliance prescription enforcement, case serial/duplicate guard behavior, case scope isolation, file upload dedup flow, and audit mutation sanitization/scope guarantees.
+
+Suggested verification focus for re-audit:
+
+```bash
+cd apps/api && go test ./internal/service ./internal/repository ./internal/httpserver ./internal/middleware
+```

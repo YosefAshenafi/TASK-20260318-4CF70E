@@ -166,7 +166,7 @@ func (r *ComplianceRepository) ListViolations(ctx context.Context, p *access.Pri
 	return rows, total, err
 }
 
-func (r *ComplianceRepository) CountPurchaseRecordsSince(ctx context.Context, institutionID, clientID string, medicationID *string, since time.Time, deptID, teamID *string) (int64, error) {
+func (r *ComplianceRepository) CountPurchaseRecordsSince(ctx context.Context, institutionID, clientID string, medicationID *string, since time.Time, deptID, teamID *string, scopedByOrg bool) (int64, error) {
 	q := r.db.WithContext(ctx).Model(&model.CompliancePurchaseRecord{}).
 		Where("institution_id = ? AND client_id = ? AND recorded_at >= ?", institutionID, clientID, since)
 	if medicationID != nil && *medicationID != "" {
@@ -174,15 +174,17 @@ func (r *ComplianceRepository) CountPurchaseRecordsSince(ctx context.Context, in
 	} else {
 		q = q.Where("medication_id IS NULL OR medication_id = ''")
 	}
-	if deptID == nil {
-		q = q.Where("department_id IS NULL")
-	} else {
-		q = q.Where("department_id = ?", *deptID)
-	}
-	if teamID == nil {
-		q = q.Where("team_id IS NULL")
-	} else {
-		q = q.Where("team_id = ?", *teamID)
+	if scopedByOrg {
+		if deptID == nil {
+			q = q.Where("department_id IS NULL")
+		} else {
+			q = q.Where("department_id = ?", *deptID)
+		}
+		if teamID == nil {
+			q = q.Where("team_id IS NULL")
+		} else {
+			q = q.Where("team_id = ?", *teamID)
+		}
 	}
 	var n int64
 	err := q.Count(&n).Error

@@ -67,7 +67,6 @@ const checkVisible = ref(false)
 const checkSaving = ref(false)
 const checkClient = ref('')
 const checkMed = ref('')
-const checkControlled = ref(true)
 const checkRxId = ref('')
 const checkAt = ref('')
 
@@ -275,7 +274,6 @@ function openCheck() {
   const now = new Date()
   checkClient.value = 'client-demo-1'
   checkMed.value = 'med-controlled-1'
-  checkControlled.value = true
   checkRxId.value = ''
   checkAt.value = now.toISOString().slice(0, 16)
   checkVisible.value = true
@@ -303,7 +301,6 @@ async function submitCheck() {
       institutionId: scope.institutionId,
       clientId: checkClient.value.trim(),
       medicationId: checkMed.value.trim(),
-      isControlled: checkControlled.value,
       prescriptionAttachmentId: checkRxId.value.trim() || undefined,
       purchaseAt: purchaseAt.toISOString(),
     })
@@ -473,9 +470,6 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="Medication ID" required>
           <el-input v-model="checkMed" />
-        </el-form-item>
-        <el-form-item label="Controlled medication">
-          <el-switch v-model="checkControlled" />
         </el-form-item>
         <el-form-item label="Prescription attachment ID (optional)">
           <el-input v-model="checkRxId" placeholder="Prescription attachment id if required" />

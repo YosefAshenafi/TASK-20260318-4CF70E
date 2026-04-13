@@ -244,7 +244,7 @@ func (s *ComplianceService) CreateQualification(ctx context.Context, p *access.P
 	}
 	now := time.Now().UTC()
 	var metaBytes []byte
-	if in.Metadata != nil && len(in.Metadata) > 0 {
+	if len(in.Metadata) > 0 {
 		var err error
 		metaBytes, err = json.Marshal(in.Metadata)
 		if err != nil {
@@ -632,7 +632,6 @@ type CheckPurchaseInput struct {
 	InstitutionID            string
 	ClientID                 string
 	MedicationID             string
-	IsControlled             bool
 	PrescriptionAttachmentID *string
 	PurchaseAt               time.Time
 }
@@ -680,7 +679,8 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 		if err != nil {
 			continue
 		}
-		if rule.RequiresPrescription && in.IsControlled {
+		// Server-side restriction rules are authoritative; request flags cannot bypass checks.
+		if rule.RequiresPrescription {
 			hasRx := in.PrescriptionAttachmentID != nil && *in.PrescriptionAttachmentID != ""
 			if hasRx && s.fileRepo != nil {
 				exists := s.fileRepo.FileObjectExists(ctx, *in.PrescriptionAttachmentID)
@@ -689,7 +689,11 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 				}
 			}
 			if !hasRx {
-				details, _ := json.Marshal(map[string]any{"reason": "PRESCRIPTION_REQUIRED", "restrictionId": row.ID})
+				details, _ := json.Marshal(map[string]any{
+					"reason":        "PRESCRIPTION_REQUIRED",
+					"restrictionId": row.ID,
+					"source":        "restriction_rule",
+				})
 				_ = s.repo.InsertViolation(ctx, &model.RestrictionViolationRecord{
 					ID:             uuid.NewString(),
 					RestrictionID:  &row.ID,
@@ -701,7 +705,7 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 					DetailsJSON:    details,
 					CreatedAt:      time.Now().UTC(),
 				})
-				return &CheckPurchaseResult{Allowed: false, Reasons: []string{"prescription attachment required for controlled medication"}}, nil
+				return &CheckPurchaseResult{Allowed: false, Reasons: []string{"prescription attachment required by active restriction rule"}}, nil
 			}
 		}
 	}
@@ -713,7 +717,8 @@ func (s *ComplianceService) CheckPurchase(ctx context.Context, p *access.Princip
 		}
 		if rule.FrequencyDays > 0 {
 			since := in.PurchaseAt.Add(-time.Duration(rule.FrequencyDays) * 24 * time.Hour)
-			n, err := s.repo.CountPurchaseRecordsSince(ctx, in.InstitutionID, in.ClientID, medPtr, since, row.DepartmentID, row.TeamID)
+			countWithinRuleScope := row.DepartmentID != nil || row.TeamID != nil
+			n, err := s.repo.CountPurchaseRecordsSince(ctx, in.InstitutionID, in.ClientID, medPtr, since, row.DepartmentID, row.TeamID, countWithinRuleScope)
 			if err != nil {
 				return nil, err
 			}

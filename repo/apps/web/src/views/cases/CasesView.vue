@@ -3,7 +3,7 @@ import { EditPen, View } from '@element-plus/icons-vue'
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { apiGet, apiPatch, apiPost } from '@/api/http'
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/api/http'
 import { useCreateScopeContext } from '@/composables/useDataScope'
 import { useAuthStore } from '@/stores/auth'
 import { caseStatusLabel, humanizeTechnicalLabel } from '@/utils/display'
@@ -36,6 +36,21 @@ type TransitionRow = {
   createdAt: string
 }
 
+type AttachmentRow = {
+  fileId: string
+  mimeType?: string
+  sizeBytes: number
+  sha256: string
+  purpose?: string
+  attachedAt: string
+}
+
+type FileOption = {
+  id: string
+  mimeType?: string
+  sizeBytes: number
+}
+
 type ListResp = {
   items: CaseRow[]
   total: number
@@ -60,6 +75,10 @@ const detailLoading = ref(false)
 const activeCase = ref<CaseRow | null>(null)
 const processing = ref<ProcessingRow[]>([])
 const transitions = ref<TransitionRow[]>([])
+const attachments = ref<AttachmentRow[]>([])
+const linkableFiles = ref<FileOption[]>([])
+const attachFileId = ref('')
+const attachPurpose = ref('')
 
 const createVisible = ref(false)
 const createSaving = ref(false)
@@ -177,15 +196,24 @@ async function openDetail(row: CaseRow) {
   detailLoading.value = true
   processing.value = []
   transitions.value = []
+  attachments.value = []
+  attachFileId.value = ''
+  attachPurpose.value = ''
   try {
-    const [c, pr, tr] = await Promise.all([
+    const [c, pr, tr, at] = await Promise.all([
       apiGet<CaseRow>(`/api/v1/cases/${row.id}`),
       apiGet<{ items: ProcessingRow[] }>(`/api/v1/cases/${row.id}/processing-records`),
       apiGet<{ items: TransitionRow[] }>(`/api/v1/cases/${row.id}/status-transitions`),
+      apiGet<{ items: AttachmentRow[] }>(`/api/v1/cases/${row.id}/attachments`),
     ])
     activeCase.value = c
     processing.value = pr.items ?? []
     transitions.value = tr.items ?? []
+    attachments.value = at.items ?? []
+    if (canManage()) {
+      const files = await apiGet<{ items: FileOption[] }>('/api/v1/files?page=1&pageSize=100')
+      linkableFiles.value = files.items ?? []
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : 'Failed to load case')
   } finally {
@@ -298,6 +326,38 @@ async function editCase() {
     await load()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : 'Update failed')
+  }
+}
+
+async function attachFileToCase() {
+  const row = activeCase.value
+  if (!row || !attachFileId.value) return
+  try {
+    await apiPost(`/api/v1/cases/${row.id}/attachments`, {
+      fileId: attachFileId.value,
+      purpose: attachPurpose.value.trim() || undefined,
+    })
+    ElMessage.success('Attachment archived on case.')
+    await openDetail(row)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Attach failed')
+  }
+}
+
+async function detachFileFromCase(fileId: string) {
+  const row = activeCase.value
+  if (!row) return
+  try {
+    await ElMessageBox.confirm('Remove this attachment from the case archive?', 'Confirm', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await apiDelete(`/api/v1/cases/${row.id}/attachments/${fileId}`)
+    ElMessage.success('Attachment removed from case archive.')
+    await openDetail(row)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Detach failed')
   }
 }
 
@@ -436,6 +496,29 @@ onMounted(load)
             {{ caseStatusLabel(t.fromStatus) }} → {{ caseStatusLabel(t.toStatus) }}
           </el-timeline-item>
         </el-timeline>
+
+        <h4 class="detail-h">Attachment archive</h4>
+        <div v-if="canManage()" class="detail-actions">
+          <el-select v-model="attachFileId" placeholder="Select uploaded file" filterable style="width: 240px" size="small">
+            <el-option v-for="f in linkableFiles" :key="f.id" :label="`${f.id.slice(0, 8)}… (${f.mimeType ?? 'unknown'})`" :value="f.id" />
+          </el-select>
+          <el-input v-model="attachPurpose" placeholder="Purpose (optional)" size="small" style="width: 180px" />
+          <el-button size="small" type="primary" :disabled="!attachFileId" @click="attachFileToCase">Attach</el-button>
+        </div>
+        <el-table :data="attachments" size="small" empty-text="No attachments archived">
+          <el-table-column prop="fileId" label="File ID" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="purpose" label="Purpose" width="140" />
+          <el-table-column prop="mimeType" label="MIME" width="140" />
+          <el-table-column prop="sizeBytes" label="Size" width="100" />
+          <el-table-column prop="attachedAt" label="Attached" width="170">
+            <template #default="{ row }">{{ new Date(row.attachedAt).toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column v-if="canManage()" label="" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="danger" @click="detachFileFromCase(row.fileId)">Detach</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </el-drawer>
   </div>

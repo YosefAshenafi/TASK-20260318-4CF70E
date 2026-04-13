@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,6 +72,8 @@ type importStaging struct {
 // ImportStagingRow is one row in a candidate import batch.
 type ImportStagingRow struct {
 	Name            string         `json:"name"`
+	SourceFileID    *string        `json:"sourceFileId,omitempty"`
+	SourceFileName  *string        `json:"sourceFileName,omitempty"`
 	Phone           *string        `json:"phone,omitempty"`
 	IDNumber        *string        `json:"idNumber,omitempty"`
 	Email           *string        `json:"email,omitempty"`
@@ -80,8 +85,9 @@ type ImportStagingRow struct {
 }
 
 type importValidationReport struct {
-	Rows   []ImportStagingRow `json:"rows"`
-	Errors []importRowError   `json:"errors,omitempty"`
+	Rows     []ImportStagingRow `json:"rows"`
+	Errors   []importRowError   `json:"errors,omitempty"`
+	Warnings []importRowError   `json:"warnings,omitempty"`
 }
 
 type importRowError struct {
@@ -89,23 +95,158 @@ type importRowError struct {
 	Message  string `json:"message"`
 }
 
+type CreateImportBatchInput struct {
+	InstitutionID string
+	Rows          []ImportStagingRow
+	ResumeFileIDs []string
+}
+
+var (
+	resumeEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	resumePhoneRe = regexp.MustCompile(`(?:\+?\d[\d\-\s()]{8,}\d)`)
+	resumeIDRe    = regexp.MustCompile(`(?i)(?:id|identity|passport|ssn)[^\w]{0,4}([a-z0-9\-]{6,32})`)
+)
+
+func inferCandidateNameFromResume(fileName, body string) string {
+	lines := strings.Split(body, "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || len(line) > 80 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(line), "resume") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && len(parts) <= 4 {
+			return line
+		}
+	}
+	base := strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
+	base = strings.ReplaceAll(base, "_", " ")
+	base = strings.ReplaceAll(base, "-", " ")
+	return strings.TrimSpace(base)
+}
+
+func inferSkillsFromResume(body string) []string {
+	candidates := []string{"gmp", "qa", "qc", "validation", "regulatory", "audit", "safety", "clinical", "biostatistics"}
+	lower := strings.ToLower(body)
+	out := make([]string, 0, 4)
+	for _, c := range candidates {
+		if strings.Contains(lower, c) {
+			out = append(out, strings.ToUpper(c))
+		}
+	}
+	return out
+}
+
+func parseResumeRow(fileID, fileName string, body []byte) (ImportStagingRow, []importRowError) {
+	text := strings.ReplaceAll(string(body), "\r\n", "\n")
+	name := inferCandidateNameFromResume(fileName, text)
+	var phone *string
+	var idNum *string
+	var email *string
+
+	if m := resumeEmailRe.FindString(text); m != "" {
+		v := strings.TrimSpace(m)
+		email = &v
+	}
+	if m := resumePhoneRe.FindString(text); m != "" {
+		v := strings.TrimSpace(m)
+		phone = &v
+	}
+	if m := resumeIDRe.FindStringSubmatch(text); len(m) > 1 {
+		v := strings.TrimSpace(m[1])
+		idNum = &v
+	}
+	sourceID := fileID
+	sourceName := fileName
+	row := ImportStagingRow{
+		Name:           name,
+		SourceFileID:   &sourceID,
+		SourceFileName: &sourceName,
+		Phone:          phone,
+		IDNumber:       idNum,
+		Email:          email,
+		Skills:         inferSkillsFromResume(text),
+		Tags:           []string{"resume_import"},
+	}
+	var warns []importRowError
+	if strings.TrimSpace(name) == "" {
+		warns = append(warns, importRowError{Message: "candidate name could not be inferred from resume"})
+	}
+	if email == nil && phone == nil && idNum == nil {
+		warns = append(warns, importRowError{Message: "resume has no detectable contact fields; duplicate merge confidence reduced"})
+	}
+	return row, warns
+}
+
+func (s *RecruitmentService) parseResumeFiles(ctx context.Context, p *access.Principal, userID string, fileIDs []string) ([]ImportStagingRow, []importRowError, []importRowError) {
+	rows := make([]ImportStagingRow, 0, len(fileIDs))
+	var errorsOut []importRowError
+	var warns []importRowError
+	for idx, fid := range fileIDs {
+		if strings.TrimSpace(fid) == "" {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "resumeFileIds contains empty id"})
+			continue
+		}
+		if s.fileRepo == nil || s.fileRoot == "" {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "resume import file storage is not configured"})
+			continue
+		}
+		ok, err := s.fileRepo.IsFileObjectAccessible(ctx, p, userID, fid)
+		if err != nil || !ok {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "resume file is not accessible in current scope"})
+			continue
+		}
+		obj, err := s.fileRepo.GetFileObject(ctx, fid)
+		if err != nil {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "resume file metadata not found"})
+			continue
+		}
+		abs := filepath.Join(s.fileRoot, filepath.FromSlash(obj.StoragePath))
+		payload, err := os.ReadFile(abs)
+		if err != nil {
+			errorsOut = append(errorsOut, importRowError{RowIndex: idx, Message: "failed to read resume file content"})
+			continue
+		}
+		row, rowWarns := parseResumeRow(fid, filepath.Base(obj.StoragePath), payload)
+		for _, w := range rowWarns {
+			w.RowIndex = idx
+			warns = append(warns, w)
+		}
+		rows = append(rows, row)
+	}
+	return rows, errorsOut, warns
+}
+
 // CreateImportBatch stages rows for a later commit.
-func (s *RecruitmentService) CreateImportBatch(ctx context.Context, p *access.Principal, userID string, institutionID string, rows []ImportStagingRow) (*ImportBatchDTO, error) {
+func (s *RecruitmentService) CreateImportBatch(ctx context.Context, p *access.Principal, userID string, in CreateImportBatchInput) (*ImportBatchDTO, error) {
+	institutionID := in.InstitutionID
 	dept, team := access.DefaultOrgAssignment(p, institutionID)
 	if !p.RowVisible(institutionID, dept, team) {
 		return nil, ErrForbiddenScope
 	}
+	rows := append([]ImportStagingRow{}, in.Rows...)
+	parsedRows, parseErrors, parseWarns := s.parseResumeFiles(ctx, p, userID, in.ResumeFileIDs)
+	offset := len(rows)
+	for i := range parseErrors {
+		parseErrors[i].RowIndex += offset
+	}
+	for i := range parseWarns {
+		parseWarns[i].RowIndex += offset
+	}
+	rows = append(rows, parsedRows...)
 	if len(rows) == 0 {
 		return nil, ErrImportValidationFailed
 	}
 	report := importValidationReport{Rows: rows}
+	report.Errors = append(report.Errors, parseErrors...)
+	report.Warnings = append(report.Warnings, parseWarns...)
 	for i, row := range rows {
 		if strings.TrimSpace(row.Name) == "" {
 			report.Errors = append(report.Errors, importRowError{RowIndex: i, Message: "name is required"})
 		}
-	}
-	if len(report.Errors) > 0 {
-		return nil, ErrImportValidationFailed
 	}
 	raw, err := json.Marshal(importStaging{Rows: rows})
 	if err != nil {
@@ -183,7 +324,17 @@ func (s *RecruitmentService) CommitImportBatch(ctx context.Context, p *access.Pr
 	}
 	defDept, defTeam := access.DefaultOrgAssignment(p, b.InstitutionID)
 	created := 0
-	for _, row := range st.Rows {
+	invalidRows := map[int]struct{}{}
+	var report importValidationReport
+	if err := json.Unmarshal(b.ValidationReportJSON, &report); err == nil {
+		for _, e := range report.Errors {
+			invalidRows[e.RowIndex] = struct{}{}
+		}
+	}
+	for idx, row := range st.Rows {
+		if _, skip := invalidRows[idx]; skip {
+			continue
+		}
 		if strings.TrimSpace(row.Name) == "" {
 			continue
 		}

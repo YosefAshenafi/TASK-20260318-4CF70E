@@ -204,6 +204,27 @@ func (r *FileRepository) CreateCaseAttachmentIndex(ctx context.Context, idx *mod
 	return r.db.WithContext(ctx).Create(idx).Error
 }
 
+func (r *FileRepository) ListCaseAttachmentIndexes(ctx context.Context, caseID string) ([]model.CaseAttachmentIndex, error) {
+	var rows []model.CaseAttachmentIndex
+	err := r.db.WithContext(ctx).
+		Where("case_id = ?", caseID).
+		Order("created_at ASC").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *FileRepository) DeleteCaseAttachmentIndexByCaseAndFile(ctx context.Context, caseID, fileID string) error {
+	return r.db.WithContext(ctx).
+		Where("case_id = ? AND file_object_id = ?", caseID, fileID).
+		Delete(&model.CaseAttachmentIndex{}).Error
+}
+
+func (r *FileRepository) DeleteCaseFileReference(ctx context.Context, caseID, fileID string) error {
+	return r.db.WithContext(ctx).
+		Where("ref_type = ? AND ref_id = ? AND file_object_id = ?", "case", caseID, fileID).
+		Delete(&model.FileReference{}).Error
+}
+
 // FileObjectExists returns true if a file_object row with the given ID exists.
 func (r *FileRepository) FileObjectExists(ctx context.Context, id string) bool {
 	var count int64

@@ -22,7 +22,7 @@ func TestAuditService_LogMutation_persistsRow(t *testing.T) {
 	}
 	repo := repository.NewAuditRepository(db)
 	svc := NewAuditService(repo)
-	meta := AuditRequestMeta{OperatorUserID: "u1", RequestID: "req-1"}
+	meta := AuditRequestMeta{OperatorUserID: "u1", RequestID: "req-1", InstitutionID: strPtr("inst-1")}
 	err = svc.LogMutation(context.Background(), AuditMutationInput{
 		Module:     "cases",
 		Operation:  "case.create",

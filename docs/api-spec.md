@@ -212,6 +212,26 @@ Duplicate handling policy:
 - Strategy is `latest_wins_fill_missing` (newest row as base; fill missing fields; union skills/tags).
 - Merge history is persisted in `candidate_merge_history` and an audit mutation is emitted.
 
+Resume import staging request supports both structured rows and resume file ingestion:
+
+```ts
+{
+  institutionId: string;
+  rows?: Array<{
+    name: string;
+    phone?: string;
+    idNumber?: string;
+    email?: string;
+    skills?: string[];
+    tags?: string[];
+    customFields?: Record<string, unknown>;
+  }>;
+  resumeFileIds?: string[]; // uploaded file IDs from /files/uploads/*
+}
+```
+
+The import batch response includes `validationReport` with extracted rows, errors, and warnings. Commit imports only valid staged rows.
+
 Candidate PATCH request supports structured updates for contact and profile fields:
 
 ```ts
@@ -263,11 +283,12 @@ Restriction check request:
 {
   "clientId": "client_1",
   "medicationId": "med_1",
-  "isControlled": true,
   "prescriptionAttachmentId": "file_1",
   "purchaseAt": "2026-04-13T09:00:00Z"
 }
 ```
+
+Prescription checks are enforced from server-side restriction rules and cannot be bypassed by client-provided control flags.
 
 Restriction check response data:
 
@@ -301,6 +322,9 @@ Operations:
 - `GET /cases/{id}/processing-records`
 - `POST /cases/{id}/status-transitions`
 - `GET /cases/{id}/status-transitions`
+- `GET /cases/{id}/attachments`
+- `POST /cases/{id}/attachments`
+- `DELETE /cases/{id}/attachments/{fileId}`
 - `GET /case-ledger/search`
 
 Case create DTO:

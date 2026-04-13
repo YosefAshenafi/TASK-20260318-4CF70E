@@ -37,10 +37,23 @@ type RecruitmentService struct {
 	repo      *repository.RecruitmentRepository
 	piiCipher *cryptopii.Cipher
 	audit     *AuditService
+	fileRepo  *repository.FileRepository
+	fileRoot  string
 }
 
-func NewRecruitmentService(repo *repository.RecruitmentRepository, piiCipher *cryptopii.Cipher, audit *AuditService) *RecruitmentService {
-	return &RecruitmentService{repo: repo, piiCipher: piiCipher, audit: audit}
+func NewRecruitmentService(repo *repository.RecruitmentRepository, piiCipher *cryptopii.Cipher, audit *AuditService, opts ...func(*RecruitmentService)) *RecruitmentService {
+	svc := &RecruitmentService{repo: repo, piiCipher: piiCipher, audit: audit}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+func WithResumeImportFiles(fr *repository.FileRepository, fileRoot string) func(*RecruitmentService) {
+	return func(s *RecruitmentService) {
+		s.fileRepo = fr
+		s.fileRoot = fileRoot
+	}
 }
 
 // GetCandidateOpts carries request metadata for audit logging when full PII is returned.
