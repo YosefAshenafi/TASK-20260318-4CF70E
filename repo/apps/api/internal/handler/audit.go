@@ -108,13 +108,22 @@ func (h *AuditHandler) RequestExport(c *gin.Context) {
 }
 
 func (h *AuditHandler) GetExport(c *gin.Context) {
-	_, ok := middleware.GetPrincipal(c)
-	if !ok {
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
+	uid := c.GetString("userID")
+	if uid == "" {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing user")
+		return
+	}
 	id := c.Param("exportId")
-	dto, err := h.svc.GetExport(c.Request.Context(), id)
+	dto, err := h.svc.GetExport(c.Request.Context(), pr, uid, id)
+	if errors.Is(err, service.ErrAuditExportForbidden) {
+		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "export not accessible")
+		return
+	}
 	if err != nil {
 		response.Error(c, http.StatusNotFound, "EXPORT_NOT_FOUND", "export not found")
 		return
@@ -123,13 +132,22 @@ func (h *AuditHandler) GetExport(c *gin.Context) {
 }
 
 func (h *AuditHandler) DownloadExport(c *gin.Context) {
-	_, ok := middleware.GetPrincipal(c)
-	if !ok {
+	pr, ok := middleware.GetPrincipal(c)
+	if !ok || pr == nil {
 		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing principal")
 		return
 	}
+	uid := c.GetString("userID")
+	if uid == "" {
+		response.Error(c, http.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "missing user")
+		return
+	}
 	id := c.Param("exportId")
-	dto, err := h.svc.GetExport(c.Request.Context(), id)
+	dto, err := h.svc.GetExport(c.Request.Context(), pr, uid, id)
+	if errors.Is(err, service.ErrAuditExportForbidden) {
+		response.Error(c, http.StatusForbidden, "FORBIDDEN_SCOPE", "export not accessible")
+		return
+	}
 	if err != nil || dto.OutputFilePath == nil {
 		response.Error(c, http.StatusNotFound, "EXPORT_NOT_FOUND", "export not found or not ready")
 		return

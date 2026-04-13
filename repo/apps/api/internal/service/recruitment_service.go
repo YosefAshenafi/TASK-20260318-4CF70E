@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -59,23 +61,23 @@ func (o GetCandidateOpts) AuditMeta() AuditRequestMeta {
 
 // CandidateDTO matches api-spec list/detail shape (masked PII; full fields when recruitment.view_pii).
 type CandidateDTO struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	PhoneMasked      string         `json:"phoneMasked"`
-	IDNumberMasked   string         `json:"idNumberMasked"`
-	Email            string         `json:"email,omitempty"`
-	Phone            *string        `json:"phone,omitempty"`
-	IDNumber         *string        `json:"idNumber,omitempty"`
-	Skills           []string       `json:"skills"`
-	ExperienceYears  *int           `json:"experienceYears,omitempty"`
-	EducationLevel   *string        `json:"educationLevel,omitempty"`
-	Tags             []string       `json:"tags"`
-	CustomFields     map[string]any `json:"customFields"`
-	InstitutionID    string         `json:"institutionId"`
-	DepartmentID     *string        `json:"departmentId,omitempty"`
-	TeamID           *string        `json:"teamId,omitempty"`
-	CreatedAt        string         `json:"createdAt"`
-	UpdatedAt        string         `json:"updatedAt"`
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	PhoneMasked     string         `json:"phoneMasked"`
+	IDNumberMasked  string         `json:"idNumberMasked"`
+	Email           string         `json:"email,omitempty"`
+	Phone           *string        `json:"phone,omitempty"`
+	IDNumber        *string        `json:"idNumber,omitempty"`
+	Skills          []string       `json:"skills"`
+	ExperienceYears *int           `json:"experienceYears,omitempty"`
+	EducationLevel  *string        `json:"educationLevel,omitempty"`
+	Tags            []string       `json:"tags"`
+	CustomFields    map[string]any `json:"customFields"`
+	InstitutionID   string         `json:"institutionId"`
+	DepartmentID    *string        `json:"departmentId,omitempty"`
+	TeamID          *string        `json:"teamId,omitempty"`
+	CreatedAt       string         `json:"createdAt"`
+	UpdatedAt       string         `json:"updatedAt"`
 }
 
 // PositionDTO for API responses.
@@ -165,6 +167,49 @@ func (s *RecruitmentService) encryptOptional(in *string) ([]byte, error) {
 		return nil, nil
 	}
 	return s.sealPII(*in)
+}
+
+func normalizePhoneForDuplicate(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func normalizeIDForDuplicate(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range strings.ToUpper(strings.TrimSpace(raw)) {
+		if unicode.IsDigit(r) || (r >= 'A' && r <= 'Z') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (s *RecruitmentService) duplicateHash(plain *string, normalizer func(string) string) (*string, error) {
+	if plain == nil {
+		return nil, nil
+	}
+	norm := normalizer(*plain)
+	if norm == "" {
+		return nil, nil
+	}
+	if s.piiCipher == nil || !s.piiCipher.Valid() {
+		return nil, ErrPIINotConfigured
+	}
+	sum, err := s.piiCipher.DigestHex(norm)
+	if err != nil {
+		return nil, fmt.Errorf("duplicate hash failed: %w", err)
+	}
+	if sum == "" {
+		return nil, nil
+	}
+	return &sum, nil
 }
 
 func (s *RecruitmentService) candidateDTO(c *model.Candidate, tags []string, reveal bool) CandidateDTO {
@@ -371,6 +416,14 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 	if err != nil {
 		return nil, err
 	}
+	phoneNormHash, err := s.duplicateHash(in.Phone, normalizePhoneForDuplicate)
+	if err != nil {
+		return nil, err
+	}
+	idNormHash, err := s.duplicateHash(in.IDNumber, normalizeIDForDuplicate)
+	if err != nil {
+		return nil, err
+	}
 	var cfJSON []byte
 	if len(in.CustomFields) > 0 {
 		cfJSON, _ = json.Marshal(in.CustomFields)
@@ -383,7 +436,9 @@ func (s *RecruitmentService) CreateCandidate(ctx context.Context, p *access.Prin
 		TeamID:           in.TeamID,
 		Name:             in.Name,
 		PhoneEnc:         phoneEnc,
+		PhoneNormHash:    phoneNormHash,
 		IDNumberEnc:      idEnc,
+		IDNumberNormHash: idNormHash,
 		EmailEnc:         emailEnc,
 		PIIKeyVersion:    1,
 		ExperienceYears:  in.ExperienceYears,
@@ -481,6 +536,11 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 			return nil, err
 		}
 		c.PhoneEnc = b
+		h, err := s.duplicateHash(in.Phone, normalizePhoneForDuplicate)
+		if err != nil {
+			return nil, err
+		}
+		c.PhoneNormHash = h
 	}
 	if in.IDNumber != nil {
 		b, err := s.sealPII(*in.IDNumber)
@@ -488,6 +548,11 @@ func (s *RecruitmentService) UpdateCandidate(ctx context.Context, p *access.Prin
 			return nil, err
 		}
 		c.IDNumberEnc = b
+		h, err := s.duplicateHash(in.IDNumber, normalizeIDForDuplicate)
+		if err != nil {
+			return nil, err
+		}
+		c.IDNumberNormHash = h
 	}
 	if in.Email != nil {
 		b, err := s.sealPII(*in.Email)
@@ -633,11 +698,11 @@ func (s *RecruitmentService) CreatePosition(ctx context.Context, p *access.Princ
 
 // UpdatePositionInput for PATCH.
 type UpdatePositionInput struct {
-	Title       *string
-	Description *string
-	Status      *string
+	Title        *string
+	Description  *string
+	Status       *string
 	DepartmentID *string
-	TeamID      *string
+	TeamID       *string
 }
 
 func (s *RecruitmentService) UpdatePosition(ctx context.Context, p *access.Principal, id string, in UpdatePositionInput, meta AuditRequestMeta) (*PositionDTO, error) {

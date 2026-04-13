@@ -59,6 +59,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Files', permission: 'files.view' },
       },
       {
+        path: 'fees',
+        name: 'fees',
+        component: () => import('@/views/fees/FeesView.vue'),
+        meta: { title: 'Fees', permission: 'fees.view' },
+      },
+      {
         path: 'audit-logs',
         name: 'audit-logs',
         component: () => import('@/views/audit/AuditLogsView.vue'),

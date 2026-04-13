@@ -16,11 +16,11 @@ import (
 )
 
 type mergeSnapshot struct {
-	Name             string   `json:"name"`
-	ExperienceYears  *int     `json:"experienceYears,omitempty"`
-	EducationLevel   *string  `json:"educationLevel,omitempty"`
-	SkillNames       []string `json:"skills"`
-	Tags             []string `json:"tags"`
+	Name            string   `json:"name"`
+	ExperienceYears *int     `json:"experienceYears,omitempty"`
+	EducationLevel  *string  `json:"educationLevel,omitempty"`
+	SkillNames      []string `json:"skills"`
+	Tags            []string `json:"tags"`
 }
 
 func skillNamesFrom(c *model.Candidate) []string {
@@ -152,18 +152,20 @@ func (r *RecruitmentRepository) UpdateCandidate(ctx context.Context, c *model.Ca
 	q := r.db.WithContext(ctx).Model(&model.Candidate{}).Where("id = ?", c.ID)
 	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
 	res := q.Updates(map[string]interface{}{
-			"name":               c.Name,
-			"department_id":      c.DepartmentID,
-			"team_id":            c.TeamID,
-			"experience_years":   c.ExperienceYears,
-			"education_level":    c.EducationLevel,
-			"phone_enc":          c.PhoneEnc,
-			"id_number_enc":      c.IDNumberEnc,
-			"email_enc":          c.EmailEnc,
-			"pii_key_version":    c.PIIKeyVersion,
-			"custom_fields_json": c.CustomFieldsJSON,
-			"updated_at":         time.Now().UTC(),
-		})
+		"name":                c.Name,
+		"department_id":       c.DepartmentID,
+		"team_id":             c.TeamID,
+		"experience_years":    c.ExperienceYears,
+		"education_level":     c.EducationLevel,
+		"phone_enc":           c.PhoneEnc,
+		"phone_norm_hash":     c.PhoneNormHash,
+		"id_number_enc":       c.IDNumberEnc,
+		"id_number_norm_hash": c.IDNumberNormHash,
+		"email_enc":           c.EmailEnc,
+		"pii_key_version":     c.PIIKeyVersion,
+		"custom_fields_json":  c.CustomFieldsJSON,
+		"updated_at":          time.Now().UTC(),
+	})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -219,13 +221,13 @@ func (r *RecruitmentRepository) UpdatePosition(ctx context.Context, pos *model.P
 	q := r.db.WithContext(ctx).Model(&model.Position{}).Where("id = ?", pos.ID)
 	q = applyDataScope(q, p, "institution_id", "department_id", "team_id")
 	res := q.Updates(map[string]interface{}{
-			"title":         pos.Title,
-			"description":   pos.Description,
-			"status":        pos.Status,
-			"department_id": pos.DepartmentID,
-			"team_id":       pos.TeamID,
-			"updated_at":    time.Now().UTC(),
-		})
+		"title":         pos.Title,
+		"description":   pos.Description,
+		"status":        pos.Status,
+		"department_id": pos.DepartmentID,
+		"team_id":       pos.TeamID,
+		"updated_at":    time.Now().UTC(),
+	})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -261,10 +263,10 @@ func (r *RecruitmentRepository) UpdateImportBatchCommitted(ctx context.Context, 
 		Where("id = ? AND status = ?", id, "pending")
 	q = applyDataScope(q, pr, "institution_id", "department_id", "team_id")
 	res := q.Updates(map[string]interface{}{
-			"status":                 "committed",
-			"validation_report_json": validationJSON,
-			"committed_at":           committedAt,
-		})
+		"status":                 "committed",
+		"validation_report_json": validationJSON,
+		"committed_at":           committedAt,
+	})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -316,13 +318,13 @@ func (r *RecruitmentRepository) ListPositionRequirements(ctx context.Context, po
 	return rows, err
 }
 
-// --- Duplicates (same phone_enc or id_number_enc within institution) ---
+// --- Duplicates (same normalized phone or ID hash within institution) ---
 
 type DuplicateGroup struct {
-	MatchKey       string
-	MatchType      string
-	InstitutionID  string
-	CandidateIDs   []string
+	MatchKey      string
+	MatchType     string
+	InstitutionID string
+	CandidateIDs  []string
 }
 
 func (r *RecruitmentRepository) ListDuplicateGroups(ctx context.Context, pr *access.Principal) ([]DuplicateGroup, error) {
@@ -339,11 +341,11 @@ func (r *RecruitmentRepository) ListDuplicateGroups(ctx context.Context, pr *acc
 	}
 
 	phoneQuery := `
-SELECT HEX(phone_enc) AS match_key, 'phone' AS match_type, institution_id,
+SELECT phone_norm_hash AS match_key, 'phone' AS match_type, institution_id,
        GROUP_CONCAT(id ORDER BY created_at) AS ids_csv
 FROM candidates
-WHERE deleted_at IS NULL AND phone_enc IS NOT NULL AND LENGTH(phone_enc) > 0 AND ` + scopeSQL + `
-GROUP BY HEX(phone_enc), institution_id
+WHERE deleted_at IS NULL AND phone_norm_hash IS NOT NULL AND LENGTH(phone_norm_hash) = 64 AND ` + scopeSQL + `
+GROUP BY phone_norm_hash, institution_id
 HAVING COUNT(*) > 1
 `
 	var phoneRaw []row
@@ -352,11 +354,11 @@ HAVING COUNT(*) > 1
 	}
 
 	idQuery := `
-SELECT HEX(id_number_enc) AS match_key, 'id_number' AS match_type, institution_id,
+SELECT id_number_norm_hash AS match_key, 'id_number' AS match_type, institution_id,
        GROUP_CONCAT(id ORDER BY created_at) AS ids_csv
 FROM candidates
-WHERE deleted_at IS NULL AND id_number_enc IS NOT NULL AND LENGTH(id_number_enc) > 0 AND ` + scopeSQL + `
-GROUP BY HEX(id_number_enc), institution_id
+WHERE deleted_at IS NULL AND id_number_norm_hash IS NOT NULL AND LENGTH(id_number_norm_hash) = 64 AND ` + scopeSQL + `
+GROUP BY id_number_norm_hash, institution_id
 HAVING COUNT(*) > 1
 `
 	var idRaw []row
@@ -504,10 +506,10 @@ func (r *RecruitmentRepository) MergeIntoBase(ctx context.Context, baseID string
 		uq := tx.Model(&model.Candidate{}).Where("id = ?", base.ID)
 		uq = applyDataScope(uq, pr, "institution_id", "department_id", "team_id")
 		if err := uq.Updates(map[string]interface{}{
-				"experience_years": base.ExperienceYears,
-				"education_level":  base.EducationLevel,
-				"updated_at":       now,
-			}).Error; err != nil {
+			"experience_years": base.ExperienceYears,
+			"education_level":  base.EducationLevel,
+			"updated_at":       now,
+		}).Error; err != nil {
 			return err
 		}
 

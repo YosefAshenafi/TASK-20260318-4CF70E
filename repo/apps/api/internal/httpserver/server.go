@@ -66,6 +66,9 @@ func (s *Server) Run() error {
 	rbacRepo := repository.NewRbacRepository(s.db)
 	rbacSvc := service.NewRbacService(userRepo, rbacRepo, auditSvc)
 	rbacH := handler.NewRbacHandler(rbacSvc)
+	feeRepo := repository.NewFeeRepository(s.db)
+	feeSvc := service.NewFeeService(feeRepo, auditSvc)
+	feeH := handler.NewFeeHandler(feeSvc)
 	fileRepo := repository.NewFileRepository(s.db)
 	fileSvc := service.NewFileService(s.cfg.FileStorageRoot, fileRepo, caseRepo, auditSvc)
 	fileH := handler.NewFileHandler(fileSvc)
@@ -150,6 +153,10 @@ func (s *Server) Run() error {
 			authz.GET("/files/:fileId", middleware.RequirePermission("files.view"), fileH.GetFile)
 			authz.GET("/files/:fileId/download", middleware.RequirePermission("files.view"), fileH.DownloadFile)
 			authz.POST("/files/:fileId/link", middleware.RequirePermission("files.manage"), fileH.LinkFile)
+
+			authz.GET("/fees", middleware.RequirePermission("fees.view"), feeH.ListFees)
+			authz.POST("/fees", middleware.RequirePermission("fees.manage"), feeH.CreateFee)
+			authz.PATCH("/fees/:id", middleware.RequirePermission("fees.manage"), feeH.PatchFee)
 
 			authz.GET("/users", middleware.RequirePermission("system.rbac"), rbacH.ListUsers)
 			authz.POST("/users", middleware.RequirePermission("system.rbac"), rbacH.CreateUser)

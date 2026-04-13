@@ -25,6 +25,18 @@ type ListResp = {
   pageSize: number
 }
 
+type PositionOption = { id: string; title: string }
+type DuplicateGroup = {
+  matchType: string
+  institutionId: string
+  candidateIds: string[]
+}
+type MatchScore = {
+  score: number
+  breakdown: { skills: number; experience: number; education: number }
+  reasons: string[]
+}
+
 const { requireContext } = useCreateScopeContext()
 
 const loading = ref(false)
@@ -45,6 +57,22 @@ const formName = ref('')
 const formExp = ref<number | undefined>(undefined)
 const formEdu = ref('')
 const formSkills = ref('')
+
+const importVisible = ref(false)
+const importSaving = ref(false)
+const importRowsText = ref('[\n  {"name":"Demo Candidate","skills":["GMP"],"educationLevel":"Bachelor","experienceYears":2}\n]')
+
+const duplicateLoading = ref(false)
+const duplicates = ref<DuplicateGroup[]>([])
+
+const matchVisible = ref(false)
+const matching = ref(false)
+const matchCandidateId = ref('')
+const matchPositionId = ref('')
+const positions = ref<PositionOption[]>([])
+const matchResult = ref<MatchScore | null>(null)
+const similarCandidates = ref<CandidateRow[]>([])
+const similarPositions = ref<PositionOption[]>([])
 
 async function load() {
   loading.value = true
@@ -67,6 +95,27 @@ async function load() {
     ElMessage.error(e instanceof Error ? e.message : 'Failed to load candidates')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadDuplicates() {
+  duplicateLoading.value = true
+  try {
+    const data = await apiGet<{ items: DuplicateGroup[] }>('/api/v1/recruitment/candidates/duplicates')
+    duplicates.value = data.items ?? []
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Failed to load duplicates')
+  } finally {
+    duplicateLoading.value = false
+  }
+}
+
+async function loadPositions() {
+  try {
+    const data = await apiGet<{ items: PositionOption[] }>('/api/v1/recruitment/positions?page=1&pageSize=100')
+    positions.value = data.items ?? []
+  } catch {
+    positions.value = []
   }
 }
 
@@ -161,14 +210,128 @@ async function quickEdit(row: CandidateRow) {
   }
 }
 
-onMounted(load)
+function openImport() {
+  importVisible.value = true
+}
+
+async function commitImport() {
+  let rows: Array<Record<string, unknown>>
+  try {
+    const parsed = JSON.parse(importRowsText.value)
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      ElMessage.warning('Import payload must be a non-empty JSON array.')
+      return
+    }
+    rows = parsed as Array<Record<string, unknown>>
+  } catch {
+    ElMessage.warning('Import payload must be valid JSON.')
+    return
+  }
+
+  importSaving.value = true
+  try {
+    let scope
+    try {
+      scope = requireContext()
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : 'No data scope')
+      return
+    }
+    const batch = await apiPost<{ id: string }>('/api/v1/recruitment/candidates/imports', {
+      institutionId: scope.institutionId,
+      rows,
+    })
+    await apiPost(`/api/v1/recruitment/candidates/imports/${batch.id}/commit`, {})
+    ElMessage.success('Import committed.')
+    importVisible.value = false
+    await load()
+    await loadDuplicates()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Import failed')
+  } finally {
+    importSaving.value = false
+  }
+}
+
+async function mergeGroup(group: DuplicateGroup) {
+  if (!group.candidateIds || group.candidateIds.length < 2) return
+  const ids = [...group.candidateIds]
+  const baseCandidateId = ids[ids.length - 1]
+  const sourceCandidateIds = ids.slice(0, -1)
+  try {
+    await ElMessageBox.confirm(
+      `Merge ${sourceCandidateIds.length} duplicate record(s) into base ${baseCandidateId.slice(0, 8)}…?`,
+      'Merge duplicates',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await apiPost('/api/v1/recruitment/candidates/merge', {
+      baseCandidateId,
+      sourceCandidateIds,
+      strategy: 'latest_wins_fill_missing',
+    })
+    ElMessage.success('Merge completed.')
+    await load()
+    await loadDuplicates()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Merge failed')
+  }
+}
+
+function openMatch(row: CandidateRow) {
+  matchCandidateId.value = row.id
+  matchPositionId.value = ''
+  matchResult.value = null
+  similarCandidates.value = []
+  similarPositions.value = []
+  matchVisible.value = true
+}
+
+async function runMatch() {
+  if (!matchCandidateId.value || !matchPositionId.value) {
+    ElMessage.warning('Select both candidate and position.')
+    return
+  }
+  matching.value = true
+  try {
+    const res = await apiPost<MatchScore>('/api/v1/recruitment/match/candidate-to-position', {
+      candidateId: matchCandidateId.value,
+      positionId: matchPositionId.value,
+    })
+    matchResult.value = res
+    const [sc, sp] = await Promise.all([
+      apiGet<{ items: CandidateRow[] }>(
+        `/api/v1/recruitment/recommendations/similar-candidates/${matchCandidateId.value}?limit=5`,
+      ),
+      apiGet<{ items: PositionOption[] }>(
+        `/api/v1/recruitment/recommendations/similar-positions/${matchPositionId.value}?limit=5`,
+      ),
+    ])
+    similarCandidates.value = sc.items ?? []
+    similarPositions.value = sp.items ?? []
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : 'Match failed')
+  } finally {
+    matching.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([load(), loadDuplicates(), loadPositions()])
+})
 </script>
 
 <template>
   <div class="rec-page">
     <div class="rec-toolbar">
       <h2 class="rec-title">Candidates</h2>
-      <el-button type="primary" round @click="openCreate">Add candidate</el-button>
+      <div class="tool-actions">
+        <el-button round @click="openImport">Bulk import</el-button>
+        <el-button type="primary" round @click="openCreate">Add candidate</el-button>
+      </div>
     </div>
 
     <el-card class="rec-filters" shadow="never">
@@ -222,6 +385,9 @@ onMounted(load)
         <el-table-column label="Actions" width="104" fixed="right" align="center">
           <template #default="{ row }">
             <div class="action-icons">
+              <el-tooltip content="Match" placement="top">
+                <el-button link type="success" aria-label="Match" @click="openMatch(row)">M</el-button>
+              </el-tooltip>
               <el-tooltip content="Rename" placement="top">
                 <el-button
                   link
@@ -256,6 +422,28 @@ onMounted(load)
       </div>
     </el-card>
 
+    <el-card class="rec-card" shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span>Duplicate candidates</span>
+          <el-button link type="primary" @click="loadDuplicates">Refresh</el-button>
+        </div>
+      </template>
+      <el-table v-loading="duplicateLoading" :data="duplicates" stripe empty-text="No duplicates found">
+        <el-table-column prop="matchType" label="Type" width="120" />
+        <el-table-column label="Candidate IDs" min-width="420" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.candidateIds.join(', ') }}
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="120" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="warning" @click="mergeGroup(row)">Merge</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-dialog v-model="dialogVisible" title="New candidate" width="420px" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="Name" required>
@@ -276,6 +464,45 @@ onMounted(load)
         <el-button type="primary" :loading="dialogSaving" @click="submitCreate">Create</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="importVisible" title="Bulk import candidates" width="720px" destroy-on-close>
+      <p class="muted">Paste JSON array rows (name, skills, educationLevel, experienceYears, etc.).</p>
+      <el-input v-model="importRowsText" type="textarea" :rows="14" />
+      <template #footer>
+        <el-button @click="importVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="importSaving" @click="commitImport">Create & commit</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="matchVisible" title="Match and recommendations" width="760px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="Candidate ID">
+          <el-input v-model="matchCandidateId" readonly />
+        </el-form-item>
+        <el-form-item label="Position">
+          <el-select v-model="matchPositionId" placeholder="Select position" style="width: 100%">
+            <el-option v-for="p in positions" :key="p.id" :label="p.title" :value="p.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-button type="primary" :loading="matching" @click="runMatch">Run match</el-button>
+
+      <div v-if="matchResult" class="match-panel">
+        <p><strong>Score:</strong> {{ matchResult.score }} / 100</p>
+        <p>
+          <strong>Breakdown:</strong> skills {{ matchResult.breakdown.skills }}, experience
+          {{ matchResult.breakdown.experience }}, education {{ matchResult.breakdown.education }}
+        </p>
+        <ul>
+          <li v-for="r in matchResult.reasons" :key="r">{{ r }}</li>
+        </ul>
+        <p><strong>Similar candidates:</strong> {{ similarCandidates.map((c) => c.name).join(', ') || '—' }}</p>
+        <p><strong>Similar positions:</strong> {{ similarPositions.map((p) => p.title).join(', ') || '—' }}</p>
+      </div>
+      <template #footer>
+        <el-button @click="matchVisible = false">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -289,6 +516,10 @@ onMounted(load)
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
+}
+.tool-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 .rec-title {
   margin: 0;
@@ -318,5 +549,18 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.match-panel {
+  margin-top: 1rem;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding-top: 0.75rem;
+}
+.muted {
+  color: var(--el-text-color-secondary);
 }
 </style>

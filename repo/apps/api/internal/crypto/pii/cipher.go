@@ -4,7 +4,9 @@ package pii
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -117,4 +119,17 @@ func (c *Cipher) DecryptString(blob []byte) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// DigestHex returns deterministic HMAC-SHA256 digest for normalized duplicate keys.
+func (c *Cipher) DigestHex(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if !c.Valid() {
+		return "", ErrNoKey
+	}
+	mac := hmac.New(sha256.New, c.key)
+	_, _ = mac.Write([]byte(value))
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }

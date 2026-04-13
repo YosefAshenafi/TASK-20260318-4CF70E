@@ -20,6 +20,7 @@ const menuItems: MenuItem[] = [
   { index: '/compliance/restrictions', label: 'Restrictions', permission: 'compliance.view' },
   { index: '/cases', label: 'Cases', permission: 'cases.view' },
   { index: '/files', label: 'Files', permission: 'files.view' },
+  { index: '/fees', label: 'Fees', permission: 'fees.view' },
   { index: '/audit-logs', label: 'Audit logs', permission: 'audit.view' },
   { index: '/system/rbac', label: 'Roles & permissions', permission: 'system.rbac' },
 ]

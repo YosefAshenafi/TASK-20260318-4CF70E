@@ -50,13 +50,13 @@ type AuditRequestMeta struct {
 
 // AuditMutationInput is one append-only audit row with optional before/after field maps.
 type AuditMutationInput struct {
-	Module      string
-	Operation   string
-	TargetType  string
-	TargetID    string
-	Before      map[string]any
-	After       map[string]any
-	Meta        AuditRequestMeta
+	Module     string
+	Operation  string
+	TargetType string
+	TargetID   string
+	Before     map[string]any
+	After      map[string]any
+	Meta       AuditRequestMeta
 }
 
 // DTOToAuditMap converts a DTO to a map for audit JSON (masked / API-safe fields only).
@@ -284,6 +284,7 @@ type AuditExportFilter struct {
 
 // ErrAuditExportValidation when export filter cannot be encoded or validated.
 var ErrAuditExportValidation = errors.New("audit export validation failed")
+var ErrAuditExportForbidden = errors.New("audit export forbidden")
 
 func (s *AuditService) RequestExport(ctx context.Context, p *access.Principal, userID string, filter AuditExportFilter, meta AuditRequestMeta, outputDir string) (*AuditExportDTO, error) {
 	b, err := json.Marshal(filter)
@@ -292,11 +293,11 @@ func (s *AuditService) RequestExport(ctx context.Context, p *access.Principal, u
 	}
 	now := time.Now().UTC()
 	e := &model.AuditExport{
-		ID:                  uuid.NewString(),
-		RequestedByUserID:   userID,
-		FilterJSON:          b,
-		Status:              "pending",
-		CreatedAt:           now,
+		ID:                uuid.NewString(),
+		RequestedByUserID: userID,
+		FilterJSON:        b,
+		Status:            "pending",
+		CreatedAt:         now,
 	}
 	if err := s.repo.CreateExport(ctx, e); err != nil {
 		return nil, err
@@ -334,11 +335,17 @@ func (s *AuditService) RequestExport(ctx context.Context, p *access.Principal, u
 	return dto, nil
 }
 
-// GetExport returns the status of an export request.
-func (s *AuditService) GetExport(ctx context.Context, id string) (*AuditExportDTO, error) {
+// GetExport returns the status of an export request if the principal may access it.
+func (s *AuditService) GetExport(ctx context.Context, p *access.Principal, userID, id string) (*AuditExportDTO, error) {
 	e, err := s.repo.GetExport(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if p == nil {
+		return nil, ErrAuditExportForbidden
+	}
+	if !p.Has(access.PermissionFullAccess) && e.RequestedByUserID != userID {
+		return nil, ErrAuditExportForbidden
 	}
 	dto := &AuditExportDTO{
 		ID:        e.ID,
