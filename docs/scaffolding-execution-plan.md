@@ -32,12 +32,14 @@ Docker checkpoint:
 ### 2) Frontend
 
 - Bootstrap Vue 3 + TypeScript + Vite + Element Plus.
+- Use **Bun** only inside the `web` Docker build (install + `bun run build`); do not rely on host dev servers for verification.
 - Build routing skeleton and domain-based module layout.
 - Add role-aware menu shell and standardized feedback/confirmation patterns.
 
 Docker checkpoint:
-- Build and run frontend via Docker.
-- Run first dockerized test cycle immediately after UI baseline is complete.
+- Update `repo/docker-compose.yml` / `repo/apps/web/Dockerfile` when the UI changes how it is built or served.
+- `cd repo && docker compose up -d --build` then open **http://127.0.0.1:8080/** (nginx static bundle).
+- Run `bash repo/run_tests.sh` (includes web HTTP smoke + test stages).
 
 ### 3) Database Design
 

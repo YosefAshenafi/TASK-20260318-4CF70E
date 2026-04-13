@@ -18,5 +18,14 @@ services:
       timeout: 5s
       retries: 10
 
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: pharmaops-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+
 volumes:
   mysql_data:

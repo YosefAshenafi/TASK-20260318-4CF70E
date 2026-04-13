@@ -1,26 +1,27 @@
 # PharmaOps Project
 
-Minimal usage guide for Docker-first workflow.
+Run and verify everything through **Docker** from this directory (`repo/`).
 
-## Run with Docker
+## Stack
 
-1. Start dependencies:
-   - `docker compose up -d --build`
-2. Check service status:
-   - `docker compose ps`
-3. Stop services:
-   - `docker compose down`
+```bash
+docker compose up -d --build
+docker compose ps
+```
 
-## Run Tests
+- **Web UI:** http://127.0.0.1:8080/
+- **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
 
-Use the single test entrypoint:
+Stop:
 
-- `bash run_tests.sh`
+```bash
+docker compose down
+```
 
-Expected output:
-- Unit test stage result
-- API test stage result
-- E2E test stage result
-- Final summary with pass/fail status
+## Tests
 
-If any stage fails, the script exits with a non-zero code.
+```bash
+bash run_tests.sh
+```
+
+This builds/starts the Compose stack, performs a **web smoke check** (HTTP 200 on port 8080), then runs unit, API, and E2E stages. Any failure exits non-zero.

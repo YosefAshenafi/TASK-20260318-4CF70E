@@ -2,9 +2,20 @@
 set -euo pipefail
 
 echo "=== PharmaOps Test Runner ==="
-echo "Starting docker dependencies..."
-docker compose up -d --build db
+echo "Building and starting stack (Docker only)..."
+docker compose up -d --build
 docker compose ps
+
+echo
+echo "Smoke: web UI (http://127.0.0.1:8080/)"
+for _ in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:8080/" >/dev/null 2>&1; then
+    echo "Web responded OK."
+    break
+  fi
+  sleep 1
+done
+curl -fsS "http://127.0.0.1:8080/" >/dev/null
 
 echo
 echo "1/3 Unit tests"
