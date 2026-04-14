@@ -27,22 +27,6 @@ docker compose down
 
 You can create multiple roles from the app after signing in.
 
-## Initial Access Provisioning
-
-No default credentialed user is seeded by migrations.
-
-Provision an initial operator for API/E2E verification using the helper script:
-
-```bash
-cd repo
-API_TEST_USERNAME=qa_admin \
-API_TEST_PASSWORD_BCRYPT='$2a$12$replace_with_real_bcrypt_hash' \
-bash scripts/provision_test_user.sh
-```
-
-The helper maps the user to:
-- role `system_admin` (`10000000-0000-4000-8000-000000000020`)
-- scope `inst:dev-root` (`10000000-0000-4000-8000-000000000010`)
 
 ## Environment Variables
 
