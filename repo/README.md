@@ -2,6 +2,40 @@
 
 Run and verify everything through **Docker** from this directory (`repo/`).
 
+## Stack
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API)
+- **API:** http://127.0.0.1:8080/api/v1/health (proxied through Nginx; direct container port 8080 on `pharmaops-api`)
+- **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## Stack
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API)
+- **API:** http://127.0.0.1:8080/api/v1/health (proxied through Nginx; direct container port 8080 on `pharmaops-api`)
+- **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
+
+Stop:
+
+```bash
+docker compose down
+```
+
 ## Default Credentials
 
 | Username | Password |
@@ -26,23 +60,6 @@ bash scripts/provision_test_user.sh
 The helper maps the user to:
 - role `system_admin` (`10000000-0000-4000-8000-000000000020`)
 - scope `inst:dev-root` (`10000000-0000-4000-8000-000000000010`)
-
-## Stack
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API)
-- **API:** http://127.0.0.1:8080/api/v1/health (proxied through Nginx; direct container port 8080 on `pharmaops-api`)
-- **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
-
-Stop:
-
-```bash
-docker compose down
-```
 
 ## Environment Variables
 
@@ -114,19 +131,4 @@ Full release verification (clean database volumes, same stages, log under `repor
 
 ```bash
 bash testrun.sh
-```
-
-## Audit Remediation (2026-04-13)
-
-This delivery includes targeted remediation for static-audit blockers and medium risks:
-
-- **Compliance bypass removed:** purchase restriction checks no longer trust client `isControlled`; prescription enforcement is derived from active server-side restriction rules.
-- **Resume bulk import workflow:** recruitment imports now support resume file intake (`resumeFileIds`), extraction preview with validation warnings/errors, and commit of valid rows.
-- **Case attachment archive workflow:** case detail now has direct list/attach/detach APIs and UI for attachment archive management.
-- **Coverage hardening:** added integration-style tests for compliance prescription enforcement, case serial/duplicate guard behavior, case scope isolation, file upload dedup flow, and audit mutation sanitization/scope guarantees.
-
-Suggested verification focus for re-audit:
-
-```bash
-cd apps/api && go test ./internal/service ./internal/repository ./internal/httpserver ./internal/middleware
 ```
