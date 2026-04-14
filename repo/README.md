@@ -19,23 +19,6 @@ Stop:
 docker compose down
 ```
 
-## Stack
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-- **Web UI:** http://127.0.0.1:8080/ (sign-in uses the API)
-- **API:** http://127.0.0.1:8080/api/v1/health (proxied through Nginx; direct container port 8080 on `pharmaops-api`)
-- **MySQL:** `localhost:3306` (see `docker-compose.yml` for credentials)
-
-Stop:
-
-```bash
-docker compose down
-```
-
 ## Default Credentials
 
 | Username | Password |
