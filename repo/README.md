@@ -55,19 +55,6 @@ docker compose exec api sh -c "cd /app && sh scripts/db_migrate.sh"
 bash scripts/db_migrate.sh
 ```
 
-## Running Services Individually
-
-```bash
-# API (requires MySQL running):
-cd apps/api && go run ./cmd/api
-
-# Web dev server:
-cd apps/web && npm install && npm run dev
-
-# MySQL only:
-docker compose up -d db
-```
-
 ## Tests
 
 ```bash
